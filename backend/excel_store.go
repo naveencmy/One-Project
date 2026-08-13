@@ -32,10 +32,16 @@ const SheetLegacy = "TrackingNodes"
 // now the authoritative sheet inside workspace_data.xlsx.
 const ProfileExcelFilePath = "profile_data.xlsx"
 
+// roleTeamLead is the canonical role string for the team lead / admin.
+const roleTeamLead = "Team Lead"
+
 // ── In-Memory Session Token Store ────────────────────────────────────────────
 
 type sessionEntry struct {
 	token     string
+	profileID string
+	role      string
+	name      string
 	expiresAt time.Time
 }
 
@@ -53,8 +59,8 @@ func GenerateSessionToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// StoreSessionToken records a token with a 24-hour TTL.
-func StoreSessionToken(token string) {
+// StoreSessionToken records a token with a 24-hour TTL and associated profile identity.
+func StoreSessionToken(token, profileID, role, name string) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 	// Purge expired tokens while we're at it
@@ -66,6 +72,9 @@ func StoreSessionToken(token string) {
 	}
 	sessionStore[token] = sessionEntry{
 		token:     token,
+		profileID: profileID,
+		role:      role,
+		name:      name,
 		expiresAt: now.Add(24 * time.Hour),
 	}
 }
@@ -88,6 +97,28 @@ func ValidateSessionToken(token string) bool {
 	return true
 }
 
+// GetSessionUser retrieves the UserSession for a given token (nil if invalid).
+func GetSessionUser(token string) *UserSession {
+	if token == "" {
+		return nil
+	}
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	entry, ok := sessionStore[token]
+	if !ok {
+		return nil
+	}
+	if entry.expiresAt.Before(time.Now()) {
+		delete(sessionStore, token)
+		return nil
+	}
+	return &UserSession{
+		ProfileID: entry.profileID,
+		Role:      entry.role,
+		Name:      entry.name,
+	}
+}
+
 // ── Bootstrap / Init ──────────────────────────────────────────────────────────
 
 func InitExcelStore(filePath string) error {
@@ -100,7 +131,6 @@ func InitExcelStore(filePath string) error {
 		// File does not exist — create fresh
 		f = excelize.NewFile()
 		_ = f.DeleteSheet("Sheet1")
-		fmt.Printf("[ExcelStore] Creating new workspace: %s\n", filePath)
 	} else {
 		// File exists — open and migrate if necessary
 		var openErr error
@@ -112,9 +142,7 @@ func InitExcelStore(filePath string) error {
 		if idx, err := f.GetSheetIndex(SheetLegacy); err == nil && idx >= 0 {
 			if cidx, cerr := f.GetSheetIndex(SheetCentralNodes); cerr != nil || cidx < 0 {
 				if renameErr := f.SetSheetName(SheetLegacy, SheetCentralNodes); renameErr != nil {
-					fmt.Printf("[ExcelStore] Warning: could not rename TrackingNodes: %v\n", renameErr)
-				} else {
-					fmt.Printf("[ExcelStore] Migrated TrackingNodes → CentralNodes\n")
+					_ = renameErr
 				}
 			}
 		}
@@ -155,46 +183,111 @@ func InitExcelStore(filePath string) error {
 	}
 
 	// ── 2. Profile & Authentication Excel Workbook (profile_data.xlsx) ───
+	if err := initProfileExcel(); err != nil {
+		_ = err
+	}
+
+	return nil
+}
+
+// initProfileExcel ensures profile_data.xlsx exists with correct headers and
+// at least one Team Lead row. It migrates the legacy single-row format to the
+// new multi-row format if needed.
+func initProfileExcel() error {
 	profilePath := getProfilePath()
 	var pf *excelize.File
+
 	if _, err := os.Stat(profilePath); err != nil {
 		pf = excelize.NewFile()
 		_ = pf.DeleteSheet("Sheet1")
 	} else {
-		pf, _ = excelize.OpenFile(profilePath)
+		var openErr error
+		pf, openErr = excelize.OpenFile(profilePath)
+		if openErr != nil {
+			pf = excelize.NewFile()
+			_ = pf.DeleteSheet("Sheet1")
+		}
+	}
+	defer func() { _ = pf.Close() }()
+
+	// Ensure ProfileData sheet exists with correct headers
+	profHeaders := []string{"ProfileID", "Name", "Role", "Email", "Department", "Avatar", "AccentColor", "PinHash", "UpdatedAt"}
+	pidx, _ := pf.GetSheetIndex(SheetProfile)
+	if pidx < 0 {
+		newPidx, _ := pf.NewSheet(SheetProfile)
+		pf.SetActiveSheet(newPidx)
+	}
+	// Always write headers to ensure correct column order
+	for colIdx, h := range profHeaders {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		pf.SetCellValue(SheetProfile, cell, h)
 	}
 
-	if pf != nil {
-		pidx, _ := pf.GetSheetIndex(SheetProfile)
-		if pidx < 0 {
-			newPidx, _ := pf.NewSheet(SheetProfile)
-			pf.SetActiveSheet(newPidx)
-		}
-		profHeaders := []string{"ProfileID", "Name", "Role", "Email", "Department", "Avatar", "AccentColor", "PinHash", "UpdatedAt"}
-		for colIdx, h := range profHeaders {
-			cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-			pf.SetCellValue(SheetProfile, cell, h)
-		}
-
-		seedPinHash := loadPinFromEnv()
-		if existingPin, _ := pf.GetCellValue(SheetProfile, "H2"); strings.TrimSpace(existingPin) != "" && strings.TrimSpace(existingPin) != "true" && strings.TrimSpace(existingPin) != "false" {
-			seedPinHash = strings.TrimSpace(existingPin)
-		}
-
+	// Check if row 2 exists (Team Lead)
+	existingID, _ := pf.GetCellValue(SheetProfile, "A2")
+	if strings.TrimSpace(existingID) == "" {
+		// No Team Lead row — create one with legacy PIN migration
+		seedPin := loadPinFromEnv()
 		pf.SetCellValue(SheetProfile, "A2", "PROF-001")
-		pf.SetCellValue(SheetProfile, "C2", "Team Lead")
+		pf.SetCellValue(SheetProfile, "C2", roleTeamLead)
 		pf.SetCellValue(SheetProfile, "G2", "#5E6AD2")
-		if seedPinHash != "" && seedPinHash != "true" && seedPinHash != "false" {
-			pf.SetCellValue(SheetProfile, "H2", seedPinHash)
+		if seedPin != "" {
+			pf.SetCellValue(SheetProfile, "H2", seedPin)
 		}
 		pf.SetCellValue(SheetProfile, "I2", time.Now().UTC().Format(time.RFC3339))
-		_ = pf.SaveAs(profilePath)
-		_ = pf.Close()
-		fmt.Printf("[ExcelStore] Dedicated Profile/Auth Excel engine initialized: %s (PIN Configured: %t)\n", profilePath, seedPinHash != "")
+	} else {
+		// Row 2 exists — migrate legacy schema if needed (detect by checking A1)
+		a1, _ := pf.GetCellValue(SheetProfile, "A1")
+		if strings.EqualFold(strings.TrimSpace(a1), "Name") {
+			// Legacy 7-column schema — migrate to 9-column
+			name, _ := pf.GetCellValue(SheetProfile, "A2")
+			role, _ := pf.GetCellValue(SheetProfile, "B2")
+			email, _ := pf.GetCellValue(SheetProfile, "C2")
+			dept, _ := pf.GetCellValue(SheetProfile, "D2")
+			avatar, _ := pf.GetCellValue(SheetProfile, "E2")
+			accent, _ := pf.GetCellValue(SheetProfile, "F2")
+			pin, _ := pf.GetCellValue(SheetProfile, "G2")
+
+			// Write headers
+			for colIdx, h := range profHeaders {
+				cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+				pf.SetCellValue(SheetProfile, cell, h)
+			}
+			// Rewrite row 2 in new format
+			pf.SetCellValue(SheetProfile, "A2", "PROF-001")
+			pf.SetCellValue(SheetProfile, "B2", strings.TrimSpace(name))
+			pf.SetCellValue(SheetProfile, "C2", strings.TrimSpace(role))
+			pf.SetCellValue(SheetProfile, "D2", strings.TrimSpace(email))
+			pf.SetCellValue(SheetProfile, "E2", strings.TrimSpace(dept))
+			pf.SetCellValue(SheetProfile, "F2", strings.TrimSpace(avatar))
+			pf.SetCellValue(SheetProfile, "G2", strings.TrimSpace(accent))
+			pinClean := cleanHash(pin)
+			if pinClean == "" || pinClean == "true" || pinClean == "false" {
+				pinClean = loadPinFromEnv()
+			}
+			if pinClean != "" {
+				pf.SetCellValue(SheetProfile, "H2", pinClean)
+			}
+			pf.SetCellValue(SheetProfile, "I2", time.Now().UTC().Format(time.RFC3339))
+		} else {
+			// Ensure PROF-001 ID is set if missing
+			if strings.TrimSpace(existingID) == "" || existingID == "PROF-001" {
+				pf.SetCellValue(SheetProfile, "A2", "PROF-001")
+			}
+			// Seed pin from env if pin cell is empty
+			pinCell, _ := pf.GetCellValue(SheetProfile, "H2")
+			if strings.TrimSpace(pinCell) == "" || pinCell == "true" || pinCell == "false" {
+				if envPin := loadPinFromEnv(); envPin != "" {
+					pf.SetCellValue(SheetProfile, "H2", envPin)
+				}
+			}
+		}
 	}
 
-	fmt.Printf("[ExcelStore] Work Workspace engine initialized: %s (sheets: CentralNodes, AcademicWork, EventManagement, ProductDev, TeamRoster)\n", filePath)
-	fmt.Printf("[ExcelStore] Workspace ready: %s (sheets: CentralNodes, AcademicWork, EventManagement, ProductDev, TeamRoster, ProfileData)\n", filePath)
+	if err := pf.SaveAs(profilePath); err != nil {
+		return fmt.Errorf("failed to save profile Excel: %w", err)
+	}
+
 	return nil
 }
 
@@ -204,7 +297,6 @@ func ensureSheet(f *excelize.File, name string, headers []string) {
 	if err != nil || idx < 0 {
 		newIdx, createErr := f.NewSheet(name)
 		if createErr != nil {
-			fmt.Printf("[ExcelStore] Warning: could not create sheet %s: %v\n", name, createErr)
 			return
 		}
 		_ = newIdx
@@ -258,7 +350,6 @@ func writeItemRow(f *excelize.File, row int, item Item) {
 }
 
 // writeDomainRow routes each item to its domain-specific sub-sheet.
-// It appends a new row matching the domain schema.
 func writeDomainRow(f *excelize.File, item Item, domainRowMap map[string]int) {
 	switch item.Domain {
 	case "academic":
@@ -447,7 +538,6 @@ func SaveAllItems(filePath string, items []Item) error {
 	rows, _ := f.GetRows(SheetCentralNodes)
 	for i := 1; i < len(rows); i++ {
 		rowNum := i + 1
-		// Clear each cell in this row (up to 17 columns)
 		for col := 1; col <= 17; col++ {
 			cell, _ := excelize.CoordinatesToCellName(col, rowNum)
 			_ = f.SetCellValue(SheetCentralNodes, cell, "")
@@ -496,199 +586,419 @@ func domainHeaders(sheet string) []string {
 	}
 }
 
-// ── Profile CRUD — Consolidated into workspace_data.xlsx ─────────────────────
+// ── Multi-Profile CRUD ────────────────────────────────────────────────────────
 
-// IsConfigured returns true if a PIN hash is stored in workspace_data.xlsx ProfileData.
-func IsConfigured(filePath string) bool {
-	hash, err := GetPinHash(filePath)
+// getAllProfilesInternal reads all profile rows WITHOUT acquiring the mutex.
+// Caller must hold fileMutex or not require thread-safety (e.g., during init).
+func getAllProfilesInternal(profilePath string) ([]ProfileData, error) {
+	f, err := excelize.OpenFile(profilePath)
 	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(hash) != ""
-}
-
-// readProfileFromFile is an internal helper that reads profile cells without acquiring the mutex.
-func readProfileFromFile(targetPath string) (map[string]string, error) {
-	result := map[string]string{
-		"profile_id":  "PROF-001",
-		"role":        "Team Lead",
-		"name":        "",
-		"email":       "",
-		"department":  "",
-		"avatar":      "",
-		"accentColor": "#5E6AD2",
-		"pin_hash":    "",
-		"updated_at":  "",
-	}
-
-	f, err := excelize.OpenFile(targetPath)
-	if err != nil {
-		return result, err
+		return nil, fmt.Errorf("failed to open profile excel: %w", err)
 	}
 	defer f.Close()
 
-	// Check which sheet to read from
-	sheet := SheetProfile
-	if idx, e := f.GetSheetIndex(SheetProfile); e != nil || idx < 0 {
-		return result, fmt.Errorf("ProfileData sheet not found in %s", targetPath)
+	rows, err := f.GetRows(SheetProfile)
+	if err != nil || len(rows) <= 1 {
+		return nil, nil
 	}
 
-	read := func(cell string) string {
-		v, _ := f.GetCellValue(sheet, cell)
-		return strings.TrimSpace(v)
-	}
+	// Detect schema: legacy (Name in A1) vs new (ProfileID in A1)
+	isLegacy := strings.EqualFold(strings.TrimSpace(rows[0][0]), "Name")
 
-	a1 := read("A1")
-	if strings.EqualFold(a1, "Name") {
-		// Legacy 7-column schema: Name, Role, Email, Department, Avatar, AccentColor, PinHash
-		result["profile_id"] = "PROF-001"
-		if v := read("A2"); v != "" { result["name"] = v }
-		if v := read("B2"); v != "" { result["role"] = v }
-		if v := read("C2"); v != "" { result["email"] = v }
-		if v := read("D2"); v != "" { result["department"] = v }
-		if v := read("E2"); v != "" { result["avatar"] = v }
-		if v := read("F2"); v != "" { result["accentColor"] = v }
-		if v := read("G2"); v != "" && v != "true" && v != "false" {
-			result["pin_hash"] = v
-		} else {
-			result["pin_hash"] = loadPinFromEnv()
+	var profiles []ProfileData
+	for i := 1; i < len(rows); i++ {
+		row := rows[i]
+		if len(row) == 0 || strings.TrimSpace(getCol(row, 0)) == "" {
+			continue
 		}
-		return result, nil
-	}
 
-	// 9-column schema: ProfileID, Name, Role, Email, Department, Avatar, AccentColor, PinHash, UpdatedAt
-	if v := read("A2"); v != "" { result["profile_id"] = v }
-	if v := read("B2"); v != "" { result["name"] = v }
-	if v := read("C2"); v != "" { result["role"] = v }
-	if v := read("D2"); v != "" { result["email"] = v }
-	if v := read("E2"); v != "" { result["department"] = v }
-	if v := read("F2"); v != "" { result["avatar"] = v }
-	if v := read("G2"); v != "" { result["accentColor"] = v }
-	if v := read("H2"); v != "" && v != "true" && v != "false" {
-		result["pin_hash"] = v
-	} else {
-		result["pin_hash"] = loadPinFromEnv()
-	}
-	if v := read("I2"); v != "" { result["updated_at"] = v }
+		var p ProfileData
+		if isLegacy {
+			p = ProfileData{
+				ProfileID:   "PROF-001",
+				Name:        getCol(row, 0),
+				Role:        getCol(row, 1),
+				Email:       getCol(row, 2),
+				Department:  getCol(row, 3),
+				Avatar:      getCol(row, 4),
+				AccentColor: getCol(row, 5),
+				PinHash:     cleanHash(getCol(row, 6)),
+			}
+		} else {
+			// New 9-column schema: ProfileID|Name|Role|Email|Department|Avatar|AccentColor|PinHash|UpdatedAt
+			p = ProfileData{
+				ProfileID:   getCol(row, 0),
+				Name:        getCol(row, 1),
+				Role:        getCol(row, 2),
+				Email:       getCol(row, 3),
+				Department:  getCol(row, 4),
+				Avatar:      getCol(row, 5),
+				AccentColor: getCol(row, 6),
+				PinHash:     cleanHash(getCol(row, 7)),
+				UpdatedAt:   getCol(row, 8),
+			}
+		}
 
-	return result, nil
+		// Fallback pin from env for Team Lead (PROF-001) if hash is empty
+		if p.PinHash == "" && p.ProfileID == "PROF-001" {
+			p.PinHash = loadPinFromEnv()
+		}
+		if p.AccentColor == "" {
+			p.AccentColor = "#5E6AD2"
+		}
+		if p.Role == "" && p.ProfileID == "PROF-001" {
+			p.Role = roleTeamLead
+		}
+
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
 }
 
-func GetProfile(filePath string) (map[string]string, error) {
+// GetAllProfiles returns all profiles with pin hashes (internal use only — never send to frontend).
+func GetAllProfiles() ([]ProfileData, error) {
+	fileMutex.Lock()
+	defer fileMutex.Unlock()
+	return getAllProfilesInternal(getProfilePath())
+}
+
+// GetProfileList returns the safe public list for the profile picker (no PIN hashes).
+func GetProfileList() ([]ProfileListItem, error) {
 	fileMutex.Lock()
 	defer fileMutex.Unlock()
 
-	// Always read profile from dedicated profile_data.xlsx first
-	targetPath := getProfilePath()
-	result, err := readProfileFromFile(targetPath)
+	profiles, err := getAllProfilesInternal(getProfilePath())
 	if err != nil {
-		result, _ = readProfileFromFile(filePath)
+		return nil, err
 	}
 
-	// Sanitize pin_hash: if empty or boolean string, fall back to environment PIN hash
-	ph := cleanHash(result["pin_hash"])
-	if ph == "" || ph == "true" || ph == "false" {
-		ph = cleanHash(loadPinFromEnv())
+	var list []ProfileListItem
+	for _, p := range profiles {
+		list = append(list, ProfileListItem{
+			ProfileID:   p.ProfileID,
+			Name:        p.Name,
+			Role:        p.Role,
+			Avatar:      p.Avatar,
+			Department:  p.Department,
+			AccentColor: p.AccentColor,
+			HasPin:      p.PinHash != "",
+		})
 	}
-	result["pin_hash"] = ph
-
-	return result, nil
+	return list, nil
 }
 
-func SaveProfile(filePath string, data map[string]string) error {
+// GetProfileByID returns a single profile by its ProfileID (with pin hash, internal use).
+func GetProfileByID(profileID string) (*ProfileData, error) {
 	fileMutex.Lock()
 	defer fileMutex.Unlock()
 
-	// Write profile strictly to dedicated profile_data.xlsx
-	targetPath := getProfilePath()
-	f, err := excelize.OpenFile(targetPath)
+	profiles, err := getAllProfilesInternal(getProfilePath())
 	if err != nil {
-		f = excelize.NewFile()
-		_ = f.DeleteSheet("Sheet1")
+		return nil, err
+	}
+	for _, p := range profiles {
+		if p.ProfileID == profileID {
+			cp := p
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("profile not found: %s", profileID)
+}
+
+// SaveProfileByID updates a specific profile row in profile_data.xlsx.
+// Only fields that are non-empty in `data` are updated (merge semantics).
+func SaveProfileByID(profileID string, data map[string]string) error {
+	fileMutex.Lock()
+	defer fileMutex.Unlock()
+
+	profilePath := getProfilePath()
+	f, err := excelize.OpenFile(profilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open profile excel: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	// Ensure ProfileData sheet exists
-	if idx, e := f.GetSheetIndex(SheetProfile); e != nil || idx < 0 {
-		pidx, _ := f.NewSheet(SheetProfile)
-		_ = pidx
-		profHeaders := []string{"ProfileID", "Name", "Role", "Email", "Department", "Avatar", "AccentColor", "PinHash", "UpdatedAt"}
-		for ci, h := range profHeaders {
-			cell, _ := excelize.CoordinatesToCellName(ci+1, 1)
-			f.SetCellValue(SheetProfile, cell, h)
+	rows, err := f.GetRows(SheetProfile)
+	if err != nil {
+		return fmt.Errorf("failed to read ProfileData sheet: %w", err)
+	}
+
+	targetRow := -1
+	for i := 1; i < len(rows); i++ {
+		if getCol(rows[i], 0) == profileID {
+			targetRow = i + 1 // 1-indexed Excel row
+			break
+		}
+	}
+	if targetRow < 0 {
+		return fmt.Errorf("profile not found: %s", profileID)
+	}
+
+	// Read existing values for merge
+	existing, _ := getAllProfilesInternal(profilePath)
+	var cur ProfileData
+	for _, p := range existing {
+		if p.ProfileID == profileID {
+			cur = p
+			break
 		}
 	}
 
-	existing, _ := readProfileFromFile(targetPath)
+	mergeStr := func(key, current string) string {
+		if v, ok := data[key]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+		return current
+	}
 
-	merge := func(key, cell string) {
-		if v, ok := data[key]; ok && v != "" {
-			f.SetCellValue(SheetProfile, cell, v)
-		} else if existing[key] != "" {
-			f.SetCellValue(SheetProfile, cell, existing[key])
+	name := mergeStr("name", cur.Name)
+	role := mergeStr("role", cur.Role)
+	email := mergeStr("email", cur.Email)
+	dept := mergeStr("department", cur.Department)
+	avatar := mergeStr("avatar", cur.Avatar)
+	accent := mergeStr("accentColor", cur.AccentColor)
+	if accent == "" {
+		accent = "#5E6AD2"
+	}
+
+	rowStr := fmt.Sprintf("%d", targetRow)
+	f.SetCellValue(SheetProfile, "A"+rowStr, profileID)
+	f.SetCellValue(SheetProfile, "B"+rowStr, name)
+	f.SetCellValue(SheetProfile, "C"+rowStr, role)
+	f.SetCellValue(SheetProfile, "D"+rowStr, email)
+	f.SetCellValue(SheetProfile, "E"+rowStr, dept)
+	f.SetCellValue(SheetProfile, "F"+rowStr, avatar)
+	f.SetCellValue(SheetProfile, "G"+rowStr, accent)
+	// PinHash is NOT updated here — use SavePinHashByID
+	f.SetCellValue(SheetProfile, "H"+rowStr, cur.PinHash)
+	f.SetCellValue(SheetProfile, "I"+rowStr, time.Now().UTC().Format(time.RFC3339))
+
+	return f.SaveAs(profilePath)
+}
+
+// SavePinHashByID sets the PIN hash for a specific profile.
+func SavePinHashByID(profileID, hash string) error {
+	fileMutex.Lock()
+	defer fileMutex.Unlock()
+
+	profilePath := getProfilePath()
+	f, err := excelize.OpenFile(profilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open profile excel: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	rows, err := f.GetRows(SheetProfile)
+	if err != nil {
+		return fmt.Errorf("failed to read ProfileData sheet: %w", err)
+	}
+
+	targetRow := -1
+	for i := 1; i < len(rows); i++ {
+		if getCol(rows[i], 0) == profileID {
+			targetRow = i + 1
+			break
 		}
 	}
-
-	profileID := existing["profile_id"]
-	if profileID == "" {
-		profileID = "PROF-001"
+	if targetRow < 0 {
+		return fmt.Errorf("profile not found: %s", profileID)
 	}
-	f.SetCellValue(SheetProfile, "A2", profileID)
-	merge("name", "B2")
-	merge("role", "C2")
-	merge("email", "D2")
-	merge("department", "E2")
-	merge("avatar", "F2")
 
-	accentColor := data["accentColor"]
-	if accentColor == "" {
-		accentColor = existing["accentColor"]
-	}
-	if accentColor == "" {
-		accentColor = "#5E6AD2"
-	}
-	f.SetCellValue(SheetProfile, "G2", accentColor)
+	rowStr := fmt.Sprintf("%d", targetRow)
+	f.SetCellValue(SheetProfile, "H"+rowStr, cleanHash(hash))
+	f.SetCellValue(SheetProfile, "I"+rowStr, time.Now().UTC().Format(time.RFC3339))
 
+	// Also update Team Lead PIN in env for backward compat
+	if profileID == "PROF-001" {
+		_ = savePinToEnv(hash)
+	}
+
+	return f.SaveAs(profilePath)
+}
+
+// AddNewProfile appends a new profile row and returns the generated ProfileID.
+func AddNewProfile(data map[string]string) (string, error) {
+	fileMutex.Lock()
+	defer fileMutex.Unlock()
+
+	profilePath := getProfilePath()
+	f, err := excelize.OpenFile(profilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open profile excel: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	rows, err := f.GetRows(SheetProfile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read ProfileData sheet: %w", err)
+	}
+
+	// Generate a unique ProfileID
+	newID := fmt.Sprintf("PROF-%03d", len(rows)) // e.g. PROF-003
+	// Ensure uniqueness
+	existing := make(map[string]bool)
+	for i := 1; i < len(rows); i++ {
+		existing[getCol(rows[i], 0)] = true
+	}
+	counter := len(rows)
+	for existing[newID] {
+		counter++
+		newID = fmt.Sprintf("PROF-%03d", counter)
+	}
+
+	newRow := len(rows) + 1 // next empty row
+	rowStr := fmt.Sprintf("%d", newRow)
+
+	name := strings.TrimSpace(data["name"])
+	role := strings.TrimSpace(data["role"])
+	email := strings.TrimSpace(data["email"])
+	dept := strings.TrimSpace(data["department"])
+	avatar := strings.TrimSpace(data["avatar"])
+	accent := strings.TrimSpace(data["accentColor"])
+	if accent == "" {
+		accent = "#5E6AD2"
+	}
 	pinHash := cleanHash(data["pin_hash"])
-	if pinHash == "" || pinHash == "true" || pinHash == "false" {
-		pinHash = cleanHash(existing["pin_hash"])
-	}
-	if pinHash == "" || pinHash == "true" || pinHash == "false" {
-		pinHash = cleanHash(loadPinFromEnv())
-	}
-	f.SetCellValue(SheetProfile, "H2", pinHash)
-	f.SetCellValue(SheetProfile, "I2", time.Now().UTC().Format(time.RFC3339))
 
-	if pinHash != "" && pinHash != "true" && pinHash != "false" {
-		_ = savePinToEnv(pinHash)
-	}
+	f.SetCellValue(SheetProfile, "A"+rowStr, newID)
+	f.SetCellValue(SheetProfile, "B"+rowStr, name)
+	f.SetCellValue(SheetProfile, "C"+rowStr, role)
+	f.SetCellValue(SheetProfile, "D"+rowStr, email)
+	f.SetCellValue(SheetProfile, "E"+rowStr, dept)
+	f.SetCellValue(SheetProfile, "F"+rowStr, avatar)
+	f.SetCellValue(SheetProfile, "G"+rowStr, accent)
+	f.SetCellValue(SheetProfile, "H"+rowStr, pinHash)
+	f.SetCellValue(SheetProfile, "I"+rowStr, time.Now().UTC().Format(time.RFC3339))
 
-	return f.SaveAs(targetPath)
+	return newID, f.SaveAs(profilePath)
 }
 
-func GetPinHash(filePath string) (string, error) {
-	prof, err := GetProfile(filePath)
-	if err == nil {
-		if ph := cleanHash(prof["pin_hash"]); ph != "" && ph != "true" && ph != "false" {
-			return ph, nil
+// DeleteProfileByID removes a profile row (cannot delete PROF-001 Team Lead).
+func DeleteProfileByID(profileID string) error {
+	if profileID == "PROF-001" {
+		return fmt.Errorf("cannot delete the Team Lead profile")
+	}
+
+	fileMutex.Lock()
+	defer fileMutex.Unlock()
+
+	profilePath := getProfilePath()
+	f, err := excelize.OpenFile(profilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open profile excel: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	rows, err := f.GetRows(SheetProfile)
+	if err != nil {
+		return fmt.Errorf("failed to read ProfileData sheet: %w", err)
+	}
+
+	targetRow := -1
+	for i := 1; i < len(rows); i++ {
+		if getCol(rows[i], 0) == profileID {
+			targetRow = i + 1
+			break
 		}
 	}
-	return cleanHash(loadPinFromEnv()), nil
+	if targetRow < 0 {
+		return fmt.Errorf("profile not found: %s", profileID)
+	}
+
+	if err := f.RemoveRow(SheetProfile, targetRow); err != nil {
+		return fmt.Errorf("failed to remove row: %w", err)
+	}
+
+	return f.SaveAs(profilePath)
 }
 
+// ── Legacy single-profile compat helpers ──────────────────────────────────────
+
+// IsConfigured returns true if at least one profile has a PIN hash configured.
+func IsConfigured(filePath string) bool {
+	profiles, err := GetAllProfiles()
+	if err != nil || len(profiles) == 0 {
+		return false
+	}
+	// We consider configured if Team Lead (PROF-001) has a PIN
+	for _, p := range profiles {
+		if p.ProfileID == "PROF-001" {
+			return strings.TrimSpace(p.PinHash) != ""
+		}
+	}
+	return false
+}
+
+// GetProfile returns Team Lead profile as a map (backward compat for old /api/profile endpoint).
+func GetProfile(filePath string) (map[string]string, error) {
+	p, err := GetProfileByID("PROF-001")
+	if err != nil {
+		// Return defaults
+		return map[string]string{
+			"profile_id":  "PROF-001",
+			"name":        "",
+			"role":        roleTeamLead,
+			"email":       "",
+			"department":  "",
+			"avatar":      "",
+			"accentColor": "#5E6AD2",
+			"pin_hash":    loadPinFromEnv(),
+		}, nil
+	}
+	return map[string]string{
+		"profile_id":  p.ProfileID,
+		"name":        p.Name,
+		"role":        p.Role,
+		"email":       p.Email,
+		"department":  p.Department,
+		"avatar":      p.Avatar,
+		"accentColor": p.AccentColor,
+		"pin_hash":    p.PinHash,
+		"updated_at":  p.UpdatedAt,
+	}, nil
+}
+
+// SaveProfile updates Team Lead profile (backward compat).
+func SaveProfile(filePath string, data map[string]string) error {
+	return SaveProfileByID("PROF-001", data)
+}
+
+// GetPinHash returns Team Lead PIN hash (backward compat).
+func GetPinHash(filePath string) (string, error) {
+	p, err := GetProfileByID("PROF-001")
+	if err != nil {
+		return loadPinFromEnv(), nil
+	}
+	if p.PinHash != "" {
+		return p.PinHash, nil
+	}
+	return loadPinFromEnv(), nil
+}
+
+// SavePinHash sets Team Lead PIN hash (backward compat).
 func SavePinHash(filePath string, hash string) error {
-	existing, _ := GetProfile(getProfilePath())
-	existing["pin_hash"] = hash
-	return SaveProfile(getProfilePath(), existing)
+	return SavePinHashByID("PROF-001", hash)
 }
 
-// SetupPin sets a PIN hash only if no PIN currently exists. Returns an error if already configured.
+// SetupPin sets a PIN for PROF-001 only if not yet configured.
 func SetupPin(filePath string, hash string) error {
-	existingHash, _ := GetPinHash(filePath)
-	if strings.TrimSpace(existingHash) != "" {
+	existing, _ := GetPinHash(filePath)
+	if strings.TrimSpace(existing) != "" {
 		return fmt.Errorf("PIN already configured: use verify endpoint to authenticate")
 	}
-	return SavePinHash(filePath, hash)
+	return SavePinHashByID("PROF-001", hash)
+}
+
+// SetupPinForProfile sets a PIN for a specific profile only if not yet configured.
+func SetupPinForProfile(profileID, hash string) error {
+	p, err := GetProfileByID(profileID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(p.PinHash) != "" {
+		return fmt.Errorf("PIN already configured for this profile")
+	}
+	return SavePinHashByID(profileID, hash)
 }
 
 // ── Env Helpers ───────────────────────────────────────────────────────────────
@@ -773,7 +1083,7 @@ func GetSheetsInfo(filePath string) ([]SheetInfo, error) {
 		SheetEvents:       "Event management: venue, budget, roles & event dates",
 		SheetProductDev:   "Product development: repository, tech stack, sprint cycles & deployment",
 		SheetAssignees:    "Team member roster & assignee directory",
-		SheetProfile:      "User profile configuration, preferences & SHA-256 PIN hash",
+		SheetProfile:      "User profile configuration, preferences & SHA-256 PIN hash (multi-user)",
 		SheetLegacy:       "Legacy tracking nodes (migrated to CentralNodes on first boot)",
 	}
 

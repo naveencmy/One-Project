@@ -73,26 +73,50 @@ type Item struct {
 	Activity        []ActivityLog    `json:"activity,omitempty"`
 }
 
+// ProfileData represents a single user profile row in profile_data.xlsx
 type ProfileData struct {
+	ProfileID   string `json:"profile_id"`
 	Name        string `json:"name"`
 	Email       string `json:"email"`
 	Role        string `json:"role"`
 	Department  string `json:"department"`
 	Avatar      string `json:"avatar"`
 	AccentColor string `json:"accentColor"`
-	PinHash     string `json:"pinHash"`
+	PinHash     string `json:"pin_hash,omitempty"` // never sent to frontend
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+// ProfileListItem is the safe public view for the profile picker (no PIN hash)
+type ProfileListItem struct {
+	ProfileID   string `json:"profile_id"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	Avatar      string `json:"avatar"`
+	Department  string `json:"department"`
+	AccentColor string `json:"accentColor"`
+	HasPin      bool   `json:"hasPin"` // true if PIN is configured for this profile
+}
+
+// UserSession holds the authenticated user's identity extracted from session token
+type UserSession struct {
+	ProfileID string
+	Role      string
+	Name      string
 }
 
 // AuthStatus is returned by GET /api/auth/status
 type AuthStatus struct {
-	Configured    bool   `json:"configured"`
-	SessionValid  bool   `json:"sessionValid"`
+	Configured   bool   `json:"configured"`
+	SessionValid bool   `json:"sessionValid"`
 }
 
 // AuthToken is returned by POST /api/auth/verify
 type AuthToken struct {
 	Token     string `json:"token"`
 	ExpiresIn int    `json:"expiresIn"` // seconds
+	ProfileID string `json:"profile_id"`
+	Role      string `json:"role"`
+	Name      string `json:"name"`
 }
 
 type SheetInfo struct {
@@ -102,4 +126,3 @@ type SheetInfo struct {
 	Headers     []string `json:"headers"`
 	Purpose     string   `json:"purpose"`
 }
-

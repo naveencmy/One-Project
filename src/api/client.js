@@ -3,10 +3,23 @@ const API_BASE_URL = 'http://localhost:8085/api';
 // ── Auth Token Management ──────────────────────────────────────────────────────
 
 const TOKEN_KEY = 'nexus_session_token';
+const PROFILE_KEY = 'nexus_active_profile'; // { profileId, role, name }
 
 export const getStoredToken = () => localStorage.getItem(TOKEN_KEY);
 export const storeToken = (token) => localStorage.setItem(TOKEN_KEY, token);
-export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+export const clearToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(PROFILE_KEY);
+};
+
+export const getStoredProfile = () => {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+};
+export const storeProfile = (profileData) =>
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profileData));
 
 /** Build Authorization header from stored token */
 const authHeader = () => {
@@ -19,7 +32,6 @@ const authHeader = () => {
 /**
  * GET /api/auth/status
  * Returns { configured: bool, sessionValid: bool }
- * Automatically sends stored token in Authorization header.
  */
 export const fetchAuthStatus = async () => {
   try {
@@ -36,31 +48,32 @@ export const fetchAuthStatus = async () => {
 
 /**
  * POST /api/auth/verify
- * Validates a SHA-256 PIN hash against the stored hash.
- * Returns { token, expiresIn } or null on failure.
+ * Validates a SHA-256 PIN hash for a specific profile.
+ * Body: { profile_id, pin_hash }
+ * Returns { token, expiresIn, profile_id, role, name } or throws on failure.
  */
-export const verifyPinApi = async (pinHash) => {
+export const verifyPinApi = async (profileId, pinHash) => {
   try {
     const res = await fetch(`${API_BASE_URL}/auth/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin_hash: pinHash }),
+      body: JSON.stringify({ profile_id: profileId, pin_hash: pinHash }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
-    return await res.json(); // { token, expiresIn }
+    return await res.json(); // { token, expiresIn, profile_id, role, name }
   } catch (err) {
     console.error('[Auth] verifyPin failed:', err);
-    throw err; // re-throw so caller can show message
+    throw err;
   }
 };
 
 /**
  * POST /api/auth/setup
- * Creates the initial PIN. Returns { token, expiresIn } on success,
- * throws on conflict (PIN already exists) or other errors.
+ * Creates the initial PIN for Team Lead (PROF-001).
+ * Returns { token, expiresIn, profile_id, role, name } on success.
  */
 export const setupPinApi = async (pinHash) => {
   try {
@@ -73,7 +86,7 @@ export const setupPinApi = async (pinHash) => {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
-    return await res.json(); // { token, expiresIn }
+    return await res.json();
   } catch (err) {
     console.error('[Auth] setupPin failed:', err);
     throw err;
@@ -82,7 +95,7 @@ export const setupPinApi = async (pinHash) => {
 
 /**
  * GET /api/auth/validate
- * Returns { valid: bool } for the currently stored token.
+ * Returns { valid: bool, profile_id?, role?, name? } for the stored token.
  */
 export const validateTokenApi = async () => {
   const token = getStoredToken();
@@ -95,6 +108,128 @@ export const validateTokenApi = async () => {
     return await res.json();
   } catch {
     return { valid: false };
+  }
+};
+
+// ── Multi-Profile API ──────────────────────────────────────────────────────────
+
+/**
+ * GET /api/profiles/list
+ * Returns safe profile list for the profile picker (no PIN hashes).
+ */
+export const fetchProfileListApi = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profiles/list`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn('[Profile] fetchProfileList failed:', err);
+    return null;
+  }
+};
+
+/**
+ * GET /api/profiles/{id}
+ * Returns a single profile's data (auth required).
+ */
+export const fetchProfileByIdApi = async (profileId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profiles/${encodeURIComponent(profileId)}`, {
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn('[Profile] fetchProfileById failed:', err);
+    return null;
+  }
+};
+
+/**
+ * PUT /api/profiles/{id}
+ * Updates a profile (own profile only; Team Lead can update any).
+ */
+export const updateProfileByIdApi = async (profileId, data) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profiles/${encodeURIComponent(profileId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error('[Profile] updateProfileById failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * POST /api/profiles/create
+ * Creates a new profile (Team Lead only).
+ */
+export const createProfileApi = async (data) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profiles/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error('[Profile] createProfile failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * DELETE /api/profiles/{id}
+ * Deletes a profile (Team Lead only).
+ */
+export const deleteProfileApi = async (profileId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profiles/${encodeURIComponent(profileId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error('[Profile] deleteProfile failed:', err);
+    throw err;
+  }
+};
+
+/**
+ * PUT /api/profiles/pin
+ * Set or update PIN for a profile.
+ * Body: { profile_id, pin_hash }
+ */
+export const setProfilePinApi = async (profileId, pinHash) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profiles/pin`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ profile_id: profileId, pin_hash: pinHash }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.error('[Profile] setProfilePin failed:', err);
+    throw err;
   }
 };
 
@@ -201,7 +336,7 @@ export const fetchExcelSheetsFromApi = async () => {
   }
 };
 
-// ── Profile API ────────────────────────────────────────────────────────────────
+// ── Legacy Profile API (Team Lead only backward compat) ────────────────────────
 
 export const fetchProfileFromApi = async () => {
   try {
@@ -229,7 +364,7 @@ export const saveProfileToApi = async (profileData) => {
   }
 };
 
-/** @deprecated Use setupPinApi / verifyPinApi instead */
+/** @deprecated Use setProfilePinApi instead */
 export const savePinHashToApi = async (pinHash) => {
   try {
     const res = await fetch(`${API_BASE_URL}/profile/pin`, {

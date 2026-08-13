@@ -12,7 +12,14 @@ import {
   savePinHashToApi,
   fetchAssigneesFromApi,
   saveAssigneesToApi,
-  // New auth API
+  // Multi-profile API
+  fetchProfileListApi,
+  fetchProfileByIdApi,
+  updateProfileByIdApi,
+  createProfileApi,
+  deleteProfileApi,
+  setProfilePinApi,
+  // Auth API
   fetchAuthStatus,
   verifyPinApi,
   setupPinApi,
@@ -20,34 +27,58 @@ import {
   getStoredToken,
   storeToken,
   clearToken,
+  getStoredProfile,
+  storeProfile,
 } from '../api/client';
 
 const WorkspaceContext = createContext();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth State Machine:
-//   Phase 1 (loading)  → isLoadingAuth = true
-//   Phase 2a           → isConfigured = false  → show "Create PIN" modal
-//   Phase 2b           → isConfigured = true, isPinUnlocked = false → show "Enter PIN" modal
-//   Phase 2c           → isConfigured = true, isPinUnlocked = true  → show workspace
+//   Phase 1 (loading)   → isLoadingAuth = true
+//   Phase 2a            → no profiles configured → show "Create PIN" for Team Lead
+//   Phase 2b            → profiles exist, no session → show profile picker → PIN entry
+//   Phase 2c            → session valid → show workspace (with role-aware UI)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const WorkspaceProvider = ({ children }) => {
   // ── Auth State ────────────────────────────────────────────────────────────
-  const [isLoadingAuth, setIsLoadingAuth]     = useState(true);
-  const [isConfigured, setIsConfigured]       = useState(false);   // PIN exists in backend
-  const [isPinUnlocked, setIsPinUnlocked]     = useState(false);   // Session is valid
-  const [authError, setAuthError]             = useState('');
+  const [isLoadingAuth, setIsLoadingAuth]         = useState(true);
+  const [isConfigured, setIsConfigured]           = useState(false);
+  const [isPinUnlocked, setIsPinUnlocked]         = useState(false);
+  const [authError, setAuthError]                 = useState('');
+
+  // ── Active User Identity ──────────────────────────────────────────────────
+  const [activeProfileId, setActiveProfileId]     = useState(null);  // e.g. "PROF-001"
+  const [activeRole, setActiveRole]               = useState('');     // "Team Lead" | other
+  const [activeName, setActiveName]               = useState('');
+
+  // Derived permission flag
+  const isTeamLead = activeRole === 'Team Lead';
+
+  // ── All Profiles (safe list for picker) ───────────────────────────────────
+  const [allProfiles, setAllProfiles]             = useState([]);     // ProfileListItem[]
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
 
   // ── Items / Profile / Assignees ───────────────────────────────────────────
-  const [items, setItems]                     = useState([]);
-  const [userProfile, setUserProfile]         = useState({
+  const [items, setItems]                         = useState([]);
+  const [userProfile, setUserProfile]             = useState({
     name: '', avatar: '', email: '', role: '',
-    department: '', accentColor: '#5E6AD2',
+    department: '', accentColor: '#5E6AD2', profile_id: '',
   });
-  const [assigneesList, setAssigneesList]     = useState([]);
-  const [backendConnected, setBackendConnected] = useState(false);
-  const [isLoadingBackend, setIsLoadingBackend] = useState(true);
+  const [assigneesList, setAssigneesList]         = useState([]);
+  const [backendConnected, setBackendConnected]   = useState(false);
+  const [isLoadingBackend, setIsLoadingBackend]   = useState(true);
+
+  // ── Phase 0: Load profile list (public — before auth) ─────────────────────
+  const loadProfileList = useCallback(async () => {
+    setIsLoadingProfiles(true);
+    const list = await fetchProfileListApi();
+    if (list && Array.isArray(list)) {
+      setAllProfiles(list);
+    }
+    setIsLoadingProfiles(false);
+  }, []);
 
   // ── Phase 1: Auth Initialization on Mount ─────────────────────────────────
   useEffect(() => {
@@ -56,15 +87,20 @@ export const WorkspaceProvider = ({ children }) => {
     const initAuth = async () => {
       setIsLoadingAuth(true);
 
-      // 1. Ask backend: is a PIN configured?
-      const status = await fetchAuthStatus(); // sends stored token automatically
+      // Load profile list first (needed for profile picker even before auth)
+      await loadProfileList();
+
+      if (!mounted) return;
+
+      const status = await fetchAuthStatus();
 
       if (!mounted) return;
 
       if (!status) {
-        // Backend offline — skip auth gate
+        // Backend offline — open workspace as guest
         setIsConfigured(false);
-        setIsPinUnlocked(true); // offline mode: open workspace
+        setIsPinUnlocked(true);
+        setActiveRole('Team Lead'); // offline mode: full access
         setIsLoadingAuth(false);
         return;
       }
@@ -72,15 +108,20 @@ export const WorkspaceProvider = ({ children }) => {
       setIsConfigured(status.configured);
 
       if (!status.configured) {
-        // No PIN set yet — show setup flow
+        // No PIN set yet — show Team Lead setup flow
         setIsPinUnlocked(false);
         setIsLoadingAuth(false);
         return;
       }
 
-      // PIN exists. Check if we already have a valid token.
+      // PIN exists — check if we already have a valid session
       if (status.sessionValid) {
-        // Token in localStorage is valid (backend confirmed)
+        const storedProfileData = getStoredProfile();
+        if (storedProfileData) {
+          setActiveProfileId(storedProfileData.profileId);
+          setActiveRole(storedProfileData.role || '');
+          setActiveName(storedProfileData.name || '');
+        }
         setIsPinUnlocked(true);
         setIsLoadingAuth(false);
         return;
@@ -91,15 +132,20 @@ export const WorkspaceProvider = ({ children }) => {
       if (storedToken) {
         const validation = await validateTokenApi();
         if (mounted && validation?.valid) {
+          if (validation.profile_id) {
+            setActiveProfileId(validation.profile_id);
+            setActiveRole(validation.role || '');
+            setActiveName(validation.name || '');
+            storeProfile({ profileId: validation.profile_id, role: validation.role, name: validation.name });
+          }
           setIsPinUnlocked(true);
           setIsLoadingAuth(false);
           return;
         }
-        // Token was invalid — clear it
         clearToken();
       }
 
-      // Require fresh PIN entry
+      // Require fresh PIN entry via profile picker
       setIsPinUnlocked(false);
       setIsLoadingAuth(false);
     };
@@ -116,9 +162,12 @@ export const WorkspaceProvider = ({ children }) => {
     const loadWorkspace = async () => {
       setIsLoadingBackend(true);
 
+      // Load the active user's profile specifically (or Team Lead profile as fallback)
+      const profileIdToLoad = activeProfileId || 'PROF-001';
+      
       const [apiItems, apiProfile, apiAssignees] = await Promise.all([
         fetchItemsFromApi(),
-        fetchProfileFromApi(),
+        fetchProfileByIdApi(profileIdToLoad),
         fetchAssigneesFromApi(),
       ]);
 
@@ -134,13 +183,18 @@ export const WorkspaceProvider = ({ children }) => {
 
       if (apiProfile) {
         setUserProfile({
-          name:        apiProfile.name        || '',
-          email:       apiProfile.email       || '',
-          role:        apiProfile.role        || '',
-          department:  apiProfile.department  || '',
-          avatar:      apiProfile.avatar      || '',
-          accentColor: apiProfile.accentColor || '#5E6AD2',
+          profile_id:  apiProfile.profile_id  || profileIdToLoad,
+          name:        apiProfile.name         || '',
+          email:       apiProfile.email        || '',
+          role:        apiProfile.role         || '',
+          department:  apiProfile.department   || '',
+          avatar:      apiProfile.avatar       || '',
+          accentColor: apiProfile.accentColor  || '#5E6AD2',
         });
+        // Sync activeName if it wasn't set
+        if (!activeName && apiProfile.name) {
+          setActiveName(apiProfile.name);
+        }
       }
 
       if (apiAssignees && Array.isArray(apiAssignees)) {
@@ -152,32 +206,47 @@ export const WorkspaceProvider = ({ children }) => {
 
     loadWorkspace();
     return () => { mounted = false; };
-  }, [isPinUnlocked]);
+  }, [isPinUnlocked, activeProfileId]);
 
   // ── Auth Actions ──────────────────────────────────────────────────────────
 
   /** Called after successful PIN verification — stores token and unlocks workspace */
-  const unlockPin = useCallback((token) => {
+  const unlockPin = useCallback((token, profileId, role, name) => {
     if (token) storeToken(token);
+    if (profileId) {
+      setActiveProfileId(profileId);
+      setActiveRole(role || '');
+      setActiveName(name || '');
+      storeProfile({ profileId, role, name });
+    }
     setIsPinUnlocked(true);
     setAuthError('');
   }, []);
 
-  /** Lock workspace — clears token and returns to PIN gate */
+  /** Lock workspace — clears token and returns to profile picker */
   const lockPin = useCallback(() => {
     clearToken();
     setIsPinUnlocked(false);
     setIsLoadingBackend(true);
     setItems([]);
-  }, []);
+    setActiveProfileId(null);
+    setActiveRole('');
+    setActiveName('');
+    // Reload profile list so picker is fresh
+    loadProfileList();
+  }, [loadProfileList]);
 
-  /** Verify existing PIN — returns true on success */
-  const verifyPin = useCallback(async (pinHash) => {
+  /** Verify PIN for a specific profile — returns true on success */
+  const verifyPin = useCallback(async (profileId, pinHash) => {
     setAuthError('');
     try {
-      const result = await verifyPinApi(pinHash);
+      const result = await verifyPinApi(profileId, pinHash);
       if (result?.token) {
         storeToken(result.token);
+        storeProfile({ profileId: result.profile_id, role: result.role, name: result.name });
+        setActiveProfileId(result.profile_id);
+        setActiveRole(result.role || '');
+        setActiveName(result.name || '');
         setIsPinUnlocked(true);
         return true;
       }
@@ -189,13 +258,17 @@ export const WorkspaceProvider = ({ children }) => {
     }
   }, []);
 
-  /** Setup initial PIN — returns true on success */
+  /** Setup initial PIN for Team Lead — returns true on success */
   const setupPin = useCallback(async (pinHash) => {
     setAuthError('');
     try {
       const result = await setupPinApi(pinHash);
       if (result?.token) {
         storeToken(result.token);
+        storeProfile({ profileId: result.profile_id || 'PROF-001', role: result.role || 'Team Lead', name: result.name || '' });
+        setActiveProfileId(result.profile_id || 'PROF-001');
+        setActiveRole(result.role || 'Team Lead');
+        setActiveName(result.name || '');
         setIsConfigured(true);
         setIsPinUnlocked(true);
         return true;
@@ -208,17 +281,43 @@ export const WorkspaceProvider = ({ children }) => {
     }
   }, []);
 
-  /** Legacy: update PIN hash directly (for settings page) */
+  /** Legacy: update PIN hash directly */
   const savePinHash = useCallback(async (newHash) => {
     await savePinHashToApi(newHash);
   }, []);
 
-  /** Clear PIN — resets workspace to unconfigured state */
+  /** Clear Team Lead PIN — resets to unconfigured */
   const clearPin = useCallback(async () => {
     await savePinHashToApi('');
     clearToken();
     setIsConfigured(false);
-    setIsPinUnlocked(true); // stay in workspace after clearing
+    setIsPinUnlocked(true);
+  }, []);
+
+  // ── Multi-Profile Management (Team Lead only) ─────────────────────────────
+
+  /** Reload the profile list from backend */
+  const refreshProfileList = useCallback(async () => {
+    const list = await fetchProfileListApi();
+    if (list && Array.isArray(list)) setAllProfiles(list);
+  }, []);
+
+  /** Create a new team member profile (Team Lead only) */
+  const createMemberProfile = useCallback(async (data) => {
+    const result = await createProfileApi(data);
+    if (result) await refreshProfileList();
+    return result;
+  }, [refreshProfileList]);
+
+  /** Delete a team member profile (Team Lead only) */
+  const deleteMemberProfile = useCallback(async (profileId) => {
+    await deleteProfileApi(profileId);
+    await refreshProfileList();
+  }, [refreshProfileList]);
+
+  /** Set PIN for a specific profile (Team Lead can set for any; others own only) */
+  const setMemberPin = useCallback(async (profileId, pinHash) => {
+    return await setProfilePinApi(profileId, pinHash);
   }, []);
 
   // ── Navigation & Filtering ────────────────────────────────────────────────
@@ -230,9 +329,9 @@ export const WorkspaceProvider = ({ children }) => {
   const [sortBy, setSortBy]                 = useState('priority');
 
   // ── Modals & Drawer ───────────────────────────────────────────────────────
-  const [selectedItemId, setSelectedItemId]         = useState(null);
-  const [isDrawerOpen, setIsDrawerOpen]             = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen]   = useState(false);
+  const [selectedItemId, setSelectedItemId]             = useState(null);
+  const [isDrawerOpen, setIsDrawerOpen]                 = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen]       = useState(false);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen]   = useState(false);
 
@@ -242,16 +341,21 @@ export const WorkspaceProvider = ({ children }) => {
   const closeItemDetails = () => { setIsDrawerOpen(false); };
 
   // ── Profile ───────────────────────────────────────────────────────────────
-  const updateUserProfile = (updatedFields) => {
+  const updateUserProfile = async (updatedFields) => {
     setUserProfile(prev => ({ ...prev, ...updatedFields }));
-    saveProfileToApi({
-      name:        updatedFields.name        ?? userProfile.name,
-      email:       updatedFields.email       ?? userProfile.email,
-      role:        updatedFields.role        ?? userProfile.role,
-      department:  updatedFields.department  ?? userProfile.department,
-      avatar:      updatedFields.avatar      ?? userProfile.avatar,
-      accentColor: updatedFields.accentColor ?? userProfile.accentColor,
-    });
+    const profileId = userProfile.profile_id || activeProfileId || 'PROF-001';
+    try {
+      await updateProfileByIdApi(profileId, {
+        name:        updatedFields.name        ?? userProfile.name,
+        email:       updatedFields.email       ?? userProfile.email,
+        role:        updatedFields.role        ?? userProfile.role,
+        department:  updatedFields.department  ?? userProfile.department,
+        avatar:      updatedFields.avatar      ?? userProfile.avatar,
+        accentColor: updatedFields.accentColor ?? userProfile.accentColor,
+      });
+    } catch (err) {
+      console.error('[Profile] updateUserProfile failed:', err);
+    }
   };
 
   // ── Assignees ─────────────────────────────────────────────────────────────
@@ -296,7 +400,7 @@ export const WorkspaceProvider = ({ children }) => {
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString(),
       activity: [
-        { id: `act-${Date.now()}`, user: userProfile.name || 'User', time: 'Just now', text: 'Created item.' },
+        { id: `act-${Date.now()}`, user: userProfile.name || activeName || 'User', time: 'Just now', text: 'Created item.' },
       ],
       ...newItemData,
     };
@@ -334,7 +438,7 @@ export const WorkspaceProvider = ({ children }) => {
 
   const addComment = async (id, commentText, userName) => {
     if (!commentText.trim()) return;
-    const author = userName || userProfile.name || 'User';
+    const author = userName || userProfile.name || activeName || 'User';
     const newComment = {
       id: `act-${Date.now()}`, user: author, time: 'Just now', text: commentText,
     };
@@ -369,6 +473,20 @@ export const WorkspaceProvider = ({ children }) => {
         savePinHash,
         clearPin,
 
+        // Active user identity
+        activeProfileId,
+        activeRole,
+        activeName,
+        isTeamLead,
+
+        // Multi-profile management
+        allProfiles,
+        isLoadingProfiles,
+        refreshProfileList,
+        createMemberProfile,
+        deleteMemberProfile,
+        setMemberPin,
+
         // Data
         items,
         userProfile,
@@ -379,6 +497,9 @@ export const WorkspaceProvider = ({ children }) => {
         deleteAssignee,
         backendConnected,
         isLoadingBackend,
+
+        // Legacy (kept for backward compat with old components)
+        pinHash: null, // deprecated — use allProfiles instead
 
         // Navigation
         activeDomain, setActiveDomain,

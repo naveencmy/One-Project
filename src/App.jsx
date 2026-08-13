@@ -9,7 +9,7 @@ import { SettingsView } from './components/settings/SettingsView';
 import { SidePeekDrawer } from './components/drawer/SidePeekDrawer';
 import { CreateTaskModal } from './components/modals/CreateTaskModal';
 import { ShortcutsModal } from './components/modals/ShortcutsModal';
-import { PinGate } from './components/modals/PinGate';
+import { PinGate } from './components/settings/PinGate';
 
 const AppContent = () => {
   const { 

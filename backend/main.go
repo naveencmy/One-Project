@@ -101,25 +101,69 @@ func loadPortFromEnv() string {
 	return "8085"
 }
 
+// ── Auth Middleware Helper ────────────────────────────────────────────────────
+
+// extractSessionUser reads the Bearer token from the Authorization header
+// and returns the UserSession if valid, or nil if missing/invalid.
+func extractSessionUser(r *http.Request) *UserSession {
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	return GetSessionUser(token)
+}
+
+// requireAuth returns the session user or writes a 401 and returns nil.
+func requireAuth(w http.ResponseWriter, r *http.Request) *UserSession {
+	user := extractSessionUser(r)
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized: valid session token required"}`, http.StatusUnauthorized)
+	}
+	return user
+}
+
+// requireTeamLead checks that the session user is a Team Lead. Returns nil and writes 403 if not.
+func requireTeamLead(w http.ResponseWriter, r *http.Request) *UserSession {
+	user := requireAuth(w, r)
+	if user == nil {
+		return nil
+	}
+	if user.Role != roleTeamLead {
+		http.Error(w, `{"error":"forbidden: Team Lead access required"}`, http.StatusForbidden)
+		return nil
+	}
+	return user
+}
+
 func main() {
 	if err := InitExcelStore(ExcelFilePath); err != nil {
 		log.Fatalf("Fatal error initializing Excel store: %v", err)
 	}
 
-	// Auth routes
+	// ── Auth routes ──────────────────────────────────────────────────────────
 	http.HandleFunc("/api/auth/status",   handleAuthStatus)
 	http.HandleFunc("/api/auth/verify",   handleAuthVerify)
 	http.HandleFunc("/api/auth/setup",    handleAuthSetup)
 	http.HandleFunc("/api/auth/validate", handleAuthValidate)
 
-	// Data routes
+	// ── Multi-Profile routes ─────────────────────────────────────────────────
+	http.HandleFunc("/api/profiles/list",   handleProfileList)    // GET  — public (no auth needed for picker)
+	http.HandleFunc("/api/profiles/create", handleProfileCreate)  // POST — Team Lead only
+	http.HandleFunc("/api/profiles/",       handleProfileByID)    // GET/PUT/DELETE /{id}
+	// Auth setup for specific profile (non-lead setting their own PIN)
+	http.HandleFunc("/api/profiles/pin",    handleProfilePin)     // PUT  — own profile only
+
+	// ── Legacy single-profile compat ─────────────────────────────────────────
+	http.HandleFunc("/api/profile",       handleProfile)
+	http.HandleFunc("/api/profile/pin",   handlePinHash)
+
+	// ── Data routes ──────────────────────────────────────────────────────────
 	http.HandleFunc("/api/items",         handleItems)
 	http.HandleFunc("/api/items/comment", handleComment)
 	http.HandleFunc("/api/excel/export",  handleExcelExport)
 	http.HandleFunc("/api/excel/import",  handleExcelImport)
 	http.HandleFunc("/api/excel/sheets",  handleExcelSheets)
-	http.HandleFunc("/api/profile",       handleProfile)
-	http.HandleFunc("/api/profile/pin",   handlePinHash)
 	http.HandleFunc("/api/assignees",     handleAssignees)
 
 	port := loadPortFromEnv()
@@ -137,8 +181,6 @@ func main() {
 // ── Auth Handlers ─────────────────────────────────────────────────────────────
 
 // GET /api/auth/status
-// Returns { "configured": bool, "sessionValid": bool }
-// Also validates an optional Bearer token in the Authorization header.
 func handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -152,7 +194,6 @@ func handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 	configured := IsConfigured(ExcelFilePath)
 
-	// Check token if provided
 	sessionValid := false
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -171,6 +212,9 @@ func cleanHash(s string) string {
 	return strings.ToLower(s)
 }
 
+// POST /api/auth/verify
+// Now accepts { "profile_id": "PROF-001", "pin_hash": "sha256hex" }
+// If profile_id is omitted, defaults to "PROF-001" for backward compat.
 func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -191,8 +235,9 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	var req struct {
-		PinHash  string `json:"pin_hash"`
-		AltHash  string `json:"pinHash"`
+		ProfileID string `json:"profile_id"`
+		PinHash   string `json:"pin_hash"`
+		AltHash   string `json:"pinHash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON request"}`, http.StatusBadRequest)
@@ -203,21 +248,31 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	if hashInput == "" {
 		hashInput = cleanHash(req.AltHash)
 	}
-
 	if hashInput == "" {
 		http.Error(w, `{"error":"invalid request: pin_hash required"}`, http.StatusBadRequest)
 		return
 	}
 
-	rawStored, err := GetPinHash(ExcelFilePath)
-	stored := cleanHash(rawStored)
-	if err != nil || stored == "" {
-		http.Error(w, `{"error":"workspace not configured — set up PIN first"}`, http.StatusUnauthorized)
+	// Default to Team Lead if no profile specified
+	profileID := strings.TrimSpace(req.ProfileID)
+	if profileID == "" {
+		profileID = "PROF-001"
+	}
+
+	// Load the specific profile
+	profile, err := GetProfileByID(profileID)
+	if err != nil {
+		http.Error(w, `{"error":"profile not found"}`, http.StatusUnauthorized)
 		return
 	}
 
-	if !strings.EqualFold(hashInput, stored) {
-		fmt.Printf("[Auth] Verification failed for IP %s (input len %d: %q, stored len %d: %q)\n", ip, len(hashInput), hashInput, len(stored), stored)
+	storedHash := cleanHash(profile.PinHash)
+	if storedHash == "" {
+		http.Error(w, `{"error":"PIN not configured for this profile"}`, http.StatusUnauthorized)
+		return
+	}
+
+	if !strings.EqualFold(hashInput, storedHash) {
 		http.Error(w, `{"error":"incorrect PIN"}`, http.StatusUnauthorized)
 		return
 	}
@@ -227,15 +282,19 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to generate session token"}`, http.StatusInternalServerError)
 		return
 	}
-	StoreSessionToken(token)
+	StoreSessionToken(token, profile.ProfileID, profile.Role, profile.Name)
 
-	fmt.Printf("[Auth] PIN verified — session token issued for %s\n", ip)
-	json.NewEncoder(w).Encode(AuthToken{Token: token, ExpiresIn: 86400})
+	json.NewEncoder(w).Encode(AuthToken{
+		Token:     token,
+		ExpiresIn: 86400,
+		ProfileID: profile.ProfileID,
+		Role:      profile.Role,
+		Name:      profile.Name,
+	})
 }
 
 // POST /api/auth/setup
-// Sets initial PIN — returns 409 Conflict if PIN already configured.
-// Body: { "pin_hash": "sha256hex" }
+// Sets initial PIN for Team Lead (PROF-001) — returns 409 Conflict if PIN already configured.
 func handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -264,25 +323,36 @@ func handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := SetupPin(ExcelFilePath, req.PinHash); err != nil {
-		// Already configured
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
 		return
 	}
 
-	// Auto-issue token on first setup
+	// Load profile to get name/role for token
+	profile, _ := GetProfileByID("PROF-001")
+	name := ""
+	role := roleTeamLead
+	if profile != nil {
+		name = profile.Name
+		role = profile.Role
+	}
+
 	token, err := GenerateSessionToken()
 	if err != nil {
 		http.Error(w, `{"error":"PIN saved but failed to generate session token"}`, http.StatusInternalServerError)
 		return
 	}
-	StoreSessionToken(token)
+	StoreSessionToken(token, "PROF-001", role, name)
 
-	fmt.Printf("[Auth] Initial PIN setup complete from %s\n", ip)
-	json.NewEncoder(w).Encode(AuthToken{Token: token, ExpiresIn: 86400})
+	json.NewEncoder(w).Encode(AuthToken{
+		Token:     token,
+		ExpiresIn: 86400,
+		ProfileID: "PROF-001",
+		Role:      role,
+		Name:      name,
+	})
 }
 
 // GET /api/auth/validate
-// Validates a Bearer token. Returns { "valid": bool }.
 func handleAuthValidate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -298,7 +368,276 @@ func handleAuthValidate(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	valid := ValidateSessionToken(token)
 
-	json.NewEncoder(w).Encode(map[string]bool{"valid": valid})
+	// Also return profile info if valid
+	if valid {
+		user := GetSessionUser(token)
+		if user != nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"valid":      true,
+				"profile_id": user.ProfileID,
+				"role":       user.Role,
+				"name":       user.Name,
+			})
+			return
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]bool{"valid": false})
+}
+
+// ── Multi-Profile Handlers ────────────────────────────────────────────────────
+
+// GET /api/profiles/list — public, returns safe list (no pin hashes)
+func handleProfileList(w http.ResponseWriter, r *http.Request) {
+	if enableCORS(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	list, err := GetProfileList()
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+		return
+	}
+	if list == nil {
+		list = []ProfileListItem{}
+	}
+	json.NewEncoder(w).Encode(list)
+}
+
+// POST /api/profiles/create — Team Lead only
+func handleProfileCreate(w http.ResponseWriter, r *http.Request) {
+	if enableCORS(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := requireTeamLead(w, r)
+	if user == nil {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var data map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(data["name"]) == "" {
+		http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	newID, err := AddNewProfile(data)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return the new profile (safe, no pin hash)
+	profile, _ := GetProfileByID(newID)
+	if profile != nil {
+		json.NewEncoder(w).Encode(ProfileListItem{
+			ProfileID:   profile.ProfileID,
+			Name:        profile.Name,
+			Role:        profile.Role,
+			Avatar:      profile.Avatar,
+			Department:  profile.Department,
+			AccentColor: profile.AccentColor,
+			HasPin:      profile.PinHash != "",
+		})
+	} else {
+		json.NewEncoder(w).Encode(map[string]string{"status": "created", "profile_id": newID})
+	}
+}
+
+// GET/PUT/DELETE /api/profiles/{id}
+// GET: returns profile data (own profile always; Team Lead can get any)
+// PUT: own profile only; Team Lead can edit any
+// DELETE: Team Lead only; cannot delete PROF-001
+func handleProfileByID(w http.ResponseWriter, r *http.Request) {
+	if enableCORS(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	// Extract profile ID from URL path: /api/profiles/PROF-001
+	path := strings.TrimPrefix(r.URL.Path, "/api/profiles/")
+	// Skip the sub-routes handled by other handlers
+	if path == "list" || path == "create" || path == "pin" || path == "" {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	profileID := strings.Split(path, "/")[0]
+	if profileID == "" {
+		http.Error(w, `{"error":"profile_id required in path"}`, http.StatusBadRequest)
+		return
+	}
+
+	user := requireAuth(w, r)
+	if user == nil {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Own profile or Team Lead can get any
+		if user.ProfileID != profileID && user.Role != roleTeamLead {
+			http.Error(w, `{"error":"forbidden: you can only view your own profile"}`, http.StatusForbidden)
+			return
+		}
+		profile, err := GetProfileByID(profileID)
+		if err != nil {
+			http.Error(w, `{"error":"profile not found"}`, http.StatusNotFound)
+			return
+		}
+		// Return safe version without pin_hash
+		json.NewEncoder(w).Encode(map[string]string{
+			"profile_id":  profile.ProfileID,
+			"name":        profile.Name,
+			"role":        profile.Role,
+			"email":       profile.Email,
+			"department":  profile.Department,
+			"avatar":      profile.Avatar,
+			"accentColor": profile.AccentColor,
+			"updated_at":  profile.UpdatedAt,
+		})
+
+	case http.MethodPut:
+		// Own profile only; Team Lead can edit any
+		if user.ProfileID != profileID && user.Role != roleTeamLead {
+			http.Error(w, `{"error":"forbidden: you can only edit your own profile"}`, http.StatusForbidden)
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var data map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+			return
+		}
+		// Strip pin_hash — use the /api/profiles/pin endpoint for that
+		delete(data, "pin_hash")
+		delete(data, "pinHash")
+
+		// Non-leads cannot change their own role
+		if user.Role != roleTeamLead {
+			delete(data, "role")
+		}
+
+		if err := SaveProfileByID(profileID, data); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+
+	case http.MethodDelete:
+		// Team Lead only
+		if user.Role != roleTeamLead {
+			http.Error(w, `{"error":"forbidden: Team Lead access required"}`, http.StatusForbidden)
+			return
+		}
+		if err := DeleteProfileByID(profileID); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusBadRequest)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "profile_id": profileID})
+
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// PUT /api/profiles/pin — set/update PIN for a specific profile
+// Body: { "profile_id": "PROF-002", "pin_hash": "sha256hex" }
+// Rule: can only set own pin; Team Lead can set anyone's pin.
+// If no PIN exists yet → allowed (setup). If PIN exists → requires current PIN verification (done client-side via /verify first).
+func handleProfilePin(w http.ResponseWriter, r *http.Request) {
+	if enableCORS(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPut {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	ip := getClientIP(r)
+	if !pinLimiter.Allow(ip, 10, 15*time.Minute) {
+		http.Error(w, `{"error":"Too many PIN attempts. Please wait 15 minutes."}`, http.StatusTooManyRequests)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	var req struct {
+		ProfileID string `json:"profile_id"`
+		PinHash   string `json:"pin_hash"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.PinHash == "" {
+		http.Error(w, `{"error":"pin_hash required"}`, http.StatusBadRequest)
+		return
+	}
+
+	targetProfileID := strings.TrimSpace(req.ProfileID)
+
+	// If no auth token → this is a first-time PIN setup (profile has no PIN yet)
+	user := extractSessionUser(r)
+	if user == nil {
+		// Allow PIN setup only if that profile has no PIN yet
+		if targetProfileID == "" {
+			targetProfileID = "PROF-001"
+		}
+		if err := SetupPinForProfile(targetProfileID, req.PinHash); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
+			return
+		}
+		// Issue a session token
+		profile, _ := GetProfileByID(targetProfileID)
+		name := ""
+		role := ""
+		if profile != nil {
+			name = profile.Name
+			role = profile.Role
+		}
+		token, _ := GenerateSessionToken()
+		StoreSessionToken(token, targetProfileID, role, name)
+		json.NewEncoder(w).Encode(AuthToken{Token: token, ExpiresIn: 86400, ProfileID: targetProfileID, Role: role, Name: name})
+		return
+	}
+
+	// Authenticated: own pin or team lead can change any
+	if targetProfileID == "" {
+		targetProfileID = user.ProfileID
+	}
+	if user.ProfileID != targetProfileID && user.Role != roleTeamLead {
+		http.Error(w, `{"error":"forbidden: you can only change your own PIN"}`, http.StatusForbidden)
+		return
+	}
+
+	if err := SavePinHashByID(targetProfileID, req.PinHash); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "pin_updated", "profile_id": targetProfileID})
 }
 
 // ── Excel Sheets Handler ──────────────────────────────────────────────────────
@@ -368,7 +707,6 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fmt.Printf("[ExcelStore] Added item %s (%s)\n", newItem.ID, newItem.Domain)
 		json.NewEncoder(w).Encode(newItem)
 
 	case http.MethodPut:
@@ -402,7 +740,6 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fmt.Printf("[ExcelStore] Updated item %s\n", updatedItem.ID)
 		json.NewEncoder(w).Encode(updatedItem)
 
 	case http.MethodDelete:
@@ -430,7 +767,6 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fmt.Printf("[ExcelStore] Deleted item %s\n", id)
 		json.NewEncoder(w).Encode(map[string]string{"status": "deleted", "id": id})
 
 	default:
@@ -553,7 +889,7 @@ func handleExcelImport(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ── Profile Handler ───────────────────────────────────────────────────────────
+// ── Legacy Profile Handler (backward compat — Team Lead profile only) ─────────
 
 func handleProfile(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
@@ -568,6 +904,8 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
+		// Strip pin_hash before sending
+		delete(profile, "pin_hash")
 		json.NewEncoder(w).Encode(profile)
 
 	case http.MethodPut:
@@ -576,14 +914,12 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
 			return
 		}
-		// Do NOT update pin_hash through this endpoint — use /api/profile/pin or /api/auth/setup
 		delete(incoming, "pin_hash")
 
 		if err := SaveProfile(ExcelFilePath, incoming); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
-		fmt.Printf("[Profile] Profile updated\n")
 		json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
 
 	default:
@@ -591,7 +927,7 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ── PIN Hash Handler (legacy update — requires auth) ─────────────────────────
+// ── Legacy PIN Hash Handler ───────────────────────────────────────────────────
 
 func handlePinHash(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
@@ -625,7 +961,6 @@ func handlePinHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("[Profile] PIN hash updated\n")
 	json.NewEncoder(w).Encode(map[string]string{"status": "pin_updated"})
 }
 
@@ -656,7 +991,6 @@ func handleAssignees(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
-		fmt.Printf("[ExcelStore] Saved %d assignees\n", len(assignees))
 		json.NewEncoder(w).Encode(assignees)
 
 	default:
