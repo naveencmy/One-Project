@@ -74,3 +74,54 @@ func TestInspectSchema(t *testing.T) {
 	}
 	t.Logf("Retrieved %d profiles from Supabase: %+v", len(profiles), profiles)
 }
+
+func TestNodePersistence(t *testing.T) {
+	_, err := db.InitDB()
+	if err != nil {
+		t.Skipf("DB connection skipped: %v", err)
+	}
+
+	testItem := Item{
+		Title:    "Test Automation Node",
+		Domain:   "projects",
+		Status:   "todo",
+		Priority: "high",
+		Tags:     []string{"go", "supabase", "test"},
+		Assignee: &Assignee{
+			Name: "Naveen Kumar ME",
+			Role: "Team Lead",
+		},
+	}
+
+	err = SaveItem(testItem)
+	if err != nil {
+		t.Fatalf("SaveItem failed: %v", err)
+	}
+	t.Logf("Successfully created and saved item to Supabase database.")
+
+	items, err := GetAllItems()
+	if err != nil {
+		t.Fatalf("GetAllItems failed: %v", err)
+	}
+
+	found := false
+	var savedID string
+	for _, item := range items {
+		if item.Title == "Test Automation Node" {
+			found = true
+			savedID = item.ID
+			t.Logf("Found saved item in DB: ID=%s, Title=%s, Status=%s, Tags=%v", item.ID, item.Title, item.Status, item.Tags)
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("Test node was saved but not found in GetAllItems result!")
+	}
+
+	// Cleanup test node
+	if savedID != "" {
+		_ = DeleteItem(savedID)
+		t.Logf("Cleaned up test item ID=%s from database.", savedID)
+	}
+}

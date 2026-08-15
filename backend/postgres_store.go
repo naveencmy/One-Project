@@ -95,6 +95,45 @@ func GetSessionUser(token string) *UserSession {
 
 // ── Items (Tracking Nodes) Store ──────────────────────────────────────────────
 
+func parseTags(raw interface{}) []string {
+	if raw == nil {
+		return []string{}
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		var res []string
+		for _, elem := range v {
+			if s, ok := elem.(string); ok {
+				res = append(res, s)
+			}
+		}
+		return res
+	case string:
+		str := strings.TrimSpace(v)
+		str = strings.TrimPrefix(str, "{")
+		str = strings.TrimSuffix(str, "}")
+		str = strings.TrimPrefix(str, "[")
+		str = strings.TrimSuffix(str, "]")
+		if str == "" {
+			return []string{}
+		}
+		parts := strings.Split(str, ",")
+		var res []string
+		for _, p := range parts {
+			cleaned := strings.Trim(strings.TrimSpace(p), "\"")
+			if cleaned != "" {
+				res = append(res, cleaned)
+			}
+		}
+		return res
+	case []byte:
+		return parseTags(string(v))
+	}
+	return []string{}
+}
+
 func GetAllItems() ([]Item, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -120,10 +159,10 @@ func GetAllItems() ([]Item, error) {
 		var id string
 		var title, domain, status string
 		var metricsBytes []byte
-		var tags []string
+		var tagsRaw interface{}
 		var createdAt time.Time
 
-		if err := rows.Scan(&id, &title, &domain, &status, &metricsBytes, &tags, &createdAt); err != nil {
+		if err := rows.Scan(&id, &title, &domain, &status, &metricsBytes, &tagsRaw, &createdAt); err != nil {
 			log.Printf("Error scanning tracking_node row: %v", err)
 			continue
 		}
@@ -137,11 +176,7 @@ func GetAllItems() ([]Item, error) {
 		item.Title = title
 		item.Domain = domain
 		item.Status = status
-		if tags == nil {
-			item.Tags = []string{}
-		} else {
-			item.Tags = tags
-		}
+		item.Tags = parseTags(tagsRaw)
 		item.CreatedAt = createdAt.Format(time.RFC3339)
 		if item.Activity == nil {
 			item.Activity = []ActivityLog{}
@@ -200,12 +235,9 @@ func SaveItem(item Item) error {
 		createdTime = time.Now().UTC()
 	}
 
-	tags := item.Tags
-	if tags == nil {
-		tags = []string{}
-	}
+	tagsStr := strings.Join(item.Tags, ",")
 
-	_, err = db.Pool.Exec(ctx, query, itemUUID, item.Title, item.Domain, item.Status, metricsBytes, tags, createdTime)
+	_, err = db.Pool.Exec(ctx, query, itemUUID, item.Title, item.Domain, item.Status, string(metricsBytes), tagsStr, createdTime)
 	return err
 }
 
