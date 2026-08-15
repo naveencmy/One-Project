@@ -1,18 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  User, 
-  Mail, 
-  Briefcase, 
-  Building, 
-  Palette, 
-  Check, 
-  Users, 
-  Plus, 
-  Trash2, 
-  Edit3, 
-  Sparkles, 
-  Save, 
-  ShieldCheck, 
+import {
+  User,
+  Mail,
+  Briefcase,
+  Building,
+  Palette,
+  Check,
+  Users,
+  Plus,
+  Trash2,
+  Edit3,
+  Sparkles,
+  Save,
+  ShieldCheck,
   X,
   FileSpreadsheet,
   Lock,
@@ -43,12 +43,12 @@ const ACCENT_PRESETS = [
 ];
 
 const SettingsInnerContent = () => {
-  const { 
-    userProfile, 
-    updateUserProfile, 
-    assigneesList, 
-    addAssignee, 
-    updateAssignee, 
+  const {
+    userProfile,
+    updateUserProfile,
+    assigneesList,
+    addAssignee,
+    updateAssignee,
     deleteAssignee,
     backendConnected,
     lockPin,
@@ -255,7 +255,7 @@ const SettingsInnerContent = () => {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto animate-in-fade text-gray-200">
-      
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#262626] pb-4">
         <div>
@@ -326,7 +326,7 @@ const SettingsInnerContent = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {excelSheets.length > 0 ? (
             excelSheets.map((sheet) => (
-              <div 
+              <div
                 key={sheet.name}
                 className="bg-[#1A1A1E] border border-[#262626] rounded-xl p-3.5 flex flex-col justify-between space-y-2 hover:border-[#5E6AD2]/40 transition-colors"
               >
@@ -354,7 +354,7 @@ const SettingsInnerContent = () => {
 
       {/* Main grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Left: My Profile */}
         <div className="lg:col-span-2 space-y-6">
           <form onSubmit={handleSaveProfile} className="bg-[#151516] border border-[#262626] rounded-xl p-5 shadow-lg space-y-5">
@@ -373,7 +373,7 @@ const SettingsInnerContent = () => {
 
             {/* Avatar Preview & Selector */}
             <div>
-              <label className="text-xs font-semibold text-gray-300 block mb-2">Profile Avatar</label>
+              <label htmlFor="settings-avatar-url" className="text-xs font-semibold text-gray-300 block mb-2">Profile Avatar</label>
               <div className="flex flex-wrap items-center gap-4">
                 {avatar ? (
                   <img src={avatar} alt="Avatar Preview" className="w-16 h-16 rounded-full object-cover border-2 border-[#5E6AD2] shadow-md" />
@@ -395,6 +395,8 @@ const SettingsInnerContent = () => {
                     ))}
                   </div>
                   <input
+                    id="settings-avatar-url"
+                    name="avatar_url"
                     type="url"
                     placeholder="Or paste custom image URL..."
                     value={avatar}
@@ -408,22 +410,22 @@ const SettingsInnerContent = () => {
             {/* Name & Role */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">Full Name</label>
+                <label htmlFor="settings-full-name" className="text-xs font-semibold text-gray-300 block mb-1">Full Name</label>
                 <div className="relative">
                   <User className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="text" required value={name} onChange={(e) => setName(e.target.value)}
+                  <input id="settings-full-name" name="full_name" type="text" required value={name} onChange={(e) => setName(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded-lg pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">
+                <label htmlFor="settings-job-role" className="text-xs font-semibold text-gray-300 block mb-1">
                   Job Title / Role
                   {!isTeamLead && <span className="ml-1 text-gray-500 text-[10px]">(read-only)</span>}
                 </label>
                 <div className="relative">
                   <Briefcase className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="text" required value={role} onChange={(e) => setRole(e.target.value)}
+                  <input id="settings-job-role" name="job_role" type="text" required value={role} onChange={(e) => setRole(e.target.value)}
                     disabled={!isTeamLead}
                     className={`w-full bg-[#1A1A1E] border border-[#262626] rounded-lg pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-[#5E6AD2] ${!isTeamLead ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
@@ -434,19 +436,19 @@ const SettingsInnerContent = () => {
             {/* Email & Department */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">Email Address</label>
+                <label htmlFor="settings-email" className="text-xs font-semibold text-gray-300 block mb-1">Email Address</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+                  <input id="settings-email" name="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded-lg pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">Department / Lab</label>
+                <label htmlFor="settings-department" className="text-xs font-semibold text-gray-300 block mb-1">Department / Lab</label>
                 <div className="relative">
                   <Building className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="text" value={department} onChange={(e) => setDepartment(e.target.value)}
+                  <input id="settings-department" name="department" type="text" value={department} onChange={(e) => setDepartment(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded-lg pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
@@ -465,9 +467,8 @@ const SettingsInnerContent = () => {
                     key={preset.color}
                     type="button"
                     onClick={() => setAccentColor(preset.color)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all ${
-                      accentColor === preset.color ? 'border-white text-white font-semibold shadow-md' : 'border-[#262626] text-gray-400 hover:text-white'
-                    }`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all ${accentColor === preset.color ? 'border-white text-white font-semibold shadow-md' : 'border-[#262626] text-gray-400 hover:text-white'
+                      }`}
                     style={{ backgroundColor: `${preset.color}15` }}
                   >
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: preset.color }} />
@@ -511,7 +512,7 @@ const SettingsInnerContent = () => {
               </div>
 
               <p className="text-xs text-gray-400">
-                Manage all user profiles stored in <code className="text-amber-400 font-mono">profile_data.xlsx</code>. Only Team Lead can create, edit or delete profiles.
+                Manage all user profiles stored in <code className="text-amber-400 font-mono">PostgreSQL database</code>. Only Team Lead can create, edit or delete profiles.
               </p>
 
               <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
@@ -521,9 +522,8 @@ const SettingsInnerContent = () => {
                   return (
                     <div
                       key={profile.profile_id}
-                      className={`p-2.5 bg-[#1A1A1E] border rounded-lg flex items-center justify-between gap-3 group transition-colors ${
-                        isOwnProfile ? 'border-[#5E6AD2]/50' : 'border-[#262626] hover:border-[#5E6AD2]/30'
-                      }`}
+                      className={`p-2.5 bg-[#1A1A1E] border rounded-lg flex items-center justify-between gap-3 group transition-colors ${isOwnProfile ? 'border-[#5E6AD2]/50' : 'border-[#262626] hover:border-[#5E6AD2]/30'
+                        }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         {profile.avatar ? (
@@ -693,14 +693,14 @@ const SettingsInnerContent = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] text-gray-400 block mb-1">Full Name *</label>
-                  <input type="text" required placeholder="Alice Chen" value={memberName} onChange={(e) => setMemberName(e.target.value)}
+                  <label htmlFor="member-name" className="text-[11px] text-gray-400 block mb-1">Full Name *</label>
+                  <input id="member-name" name="member_name" type="text" required placeholder="Alice Chen" value={memberName} onChange={(e) => setMemberName(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-gray-400 block mb-1">Role / Title</label>
-                  <input type="text" placeholder="Developer" value={memberRole} onChange={(e) => setMemberRole(e.target.value)}
+                  <label htmlFor="member-role" className="text-[11px] text-gray-400 block mb-1">Role / Title</label>
+                  <input id="member-role" name="member_role" type="text" placeholder="Developer" value={memberRole} onChange={(e) => setMemberRole(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
@@ -708,22 +708,22 @@ const SettingsInnerContent = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] text-gray-400 block mb-1">Email Address</label>
-                  <input type="email" placeholder="alice@team.io" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)}
+                  <label htmlFor="member-email" className="text-[11px] text-gray-400 block mb-1">Email Address</label>
+                  <input id="member-email" name="member_email" type="email" placeholder="alice@team.io" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-gray-400 block mb-1">Department</label>
-                  <input type="text" placeholder="Engineering" value={memberDept} onChange={(e) => setMemberDept(e.target.value)}
+                  <label htmlFor="member-dept" className="text-[11px] text-gray-400 block mb-1">Department</label>
+                  <input id="member-dept" name="member_dept" type="text" placeholder="Engineering" value={memberDept} onChange={(e) => setMemberDept(e.target.value)}
                     className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">Avatar Image URL</label>
-                <input type="url" placeholder="https://..." value={memberAvatar} onChange={(e) => setMemberAvatar(e.target.value)}
+                <label htmlFor="member-avatar" className="text-[11px] text-gray-400 block mb-1">Avatar Image URL</label>
+                <input id="member-avatar" name="member_avatar" type="url" placeholder="https://..." value={memberAvatar} onChange={(e) => setMemberAvatar(e.target.value)}
                   className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2] mb-2"
                 />
                 <div className="flex items-center gap-2">
@@ -738,12 +738,14 @@ const SettingsInnerContent = () => {
               </div>
 
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1 flex items-center gap-1">
+                <label htmlFor="member-pin" className="text-[11px] text-gray-400 block mb-1 flex items-center gap-1">
                   <KeyRound className="w-3 h-3" />
                   Set PIN for this profile
                   <span className="text-gray-600 ml-1">(4 digits — optional)</span>
                 </label>
                 <input
+                  id="member-pin"
+                  name="member_pin"
                   type="password"
                   inputMode="numeric"
                   maxLength={4}
@@ -798,26 +800,26 @@ const SettingsInnerContent = () => {
             </div>
             <form onSubmit={handleSaveAssignee} className="p-5 space-y-4 text-xs">
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">Full Name *</label>
-                <input type="text" required placeholder="Dr. Aris Thorne" value={newPersonName} onChange={(e) => setNewPersonName(e.target.value)}
+                <label htmlFor="assignee-name" className="text-[11px] text-gray-400 block mb-1">Full Name *</label>
+                <input id="assignee-name" name="assignee_name" type="text" required placeholder="Dr. Aris Thorne" value={newPersonName} onChange={(e) => setNewPersonName(e.target.value)}
                   className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">Role</label>
-                <input type="text" placeholder="Principal Investigator" value={newPersonRole} onChange={(e) => setNewPersonRole(e.target.value)}
+                <label htmlFor="assignee-role" className="text-[11px] text-gray-400 block mb-1">Role</label>
+                <input id="assignee-role" name="assignee_role" type="text" placeholder="Principal Investigator" value={newPersonRole} onChange={(e) => setNewPersonRole(e.target.value)}
                   className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">Email</label>
-                <input type="email" placeholder="athorne@lab.edu" value={newPersonEmail} onChange={(e) => setNewPersonEmail(e.target.value)}
+                <label htmlFor="assignee-email" className="text-[11px] text-gray-400 block mb-1">Email</label>
+                <input id="assignee-email" name="assignee_email" type="email" placeholder="athorne@lab.edu" value={newPersonEmail} onChange={(e) => setNewPersonEmail(e.target.value)}
                   className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
                 />
               </div>
               <div>
-                <label className="text-[11px] text-gray-400 block mb-1">Avatar Image URL</label>
-                <input type="url" placeholder="https://..." value={newPersonAvatar} onChange={(e) => setNewPersonAvatar(e.target.value)}
+                <label htmlFor="assignee-avatar" className="text-[11px] text-gray-400 block mb-1">Avatar Image URL</label>
+                <input id="assignee-avatar" name="assignee_avatar" type="url" placeholder="https://..." value={newPersonAvatar} onChange={(e) => setNewPersonAvatar(e.target.value)}
                   className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-3 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2] mb-2"
                 />
                 <div className="flex items-center gap-2">

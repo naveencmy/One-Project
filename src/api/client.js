@@ -121,10 +121,11 @@ export const fetchProfileListApi = async () => {
   try {
     const res = await fetch(`${API_BASE_URL}/profiles/list`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   } catch (err) {
     console.warn('[Profile] fetchProfileList failed:', err);
-    return null;
+    return [];
   }
 };
 
@@ -386,10 +387,11 @@ export const fetchAssigneesFromApi = async () => {
   try {
     const res = await fetch(`${API_BASE_URL}/assignees`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   } catch (err) {
     console.warn('Failed to fetch assignees:', err);
-    return null;
+    return [];
   }
 };
 

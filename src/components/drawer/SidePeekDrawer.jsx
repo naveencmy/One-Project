@@ -174,10 +174,12 @@ export const SidePeekDrawer = () => {
           
           {/* Editable Title */}
           <div>
-            <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">
+            <label htmlFor="drawer-item-title" className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">
               Title
             </label>
             <input
+              id="drawer-item-title"
+              name="title"
               type="text"
               value={selectedItem.title}
               onChange={(e) => handleFieldChange('title', e.target.value)}
@@ -190,8 +192,10 @@ export const SidePeekDrawer = () => {
             
             {/* Status Dropdown */}
             <div>
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Status</span>
+              <label htmlFor="drawer-item-status" className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Status</label>
               <select
+                id="drawer-item-status"
+                name="status"
                 value={selectedItem.status}
                 onChange={(e) => handleFieldChange('status', e.target.value)}
                 className="w-full bg-[#151516] border border-[#262626] text-xs text-white rounded px-2 py-1 focus:outline-none focus:border-[#5E6AD2]"
@@ -204,8 +208,10 @@ export const SidePeekDrawer = () => {
 
             {/* Priority Dropdown */}
             <div>
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Priority</span>
+              <label htmlFor="drawer-item-priority" className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Priority</label>
               <select
+                id="drawer-item-priority"
+                name="priority"
                 value={selectedItem.priority}
                 onChange={(e) => handleFieldChange('priority', e.target.value)}
                 className="w-full bg-[#151516] border border-[#262626] text-xs text-white rounded px-2 py-1 focus:outline-none focus:border-[#5E6AD2]"
@@ -218,8 +224,10 @@ export const SidePeekDrawer = () => {
 
             {/* Assignee Entity Dropdown */}
             <div>
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Assignee</span>
+              <label htmlFor="drawer-item-assignee" className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Assignee</label>
               <select
+                id="drawer-item-assignee"
+                name="assignee"
                 value={selectedItem.assignee?.name || ''}
                 onChange={(e) => {
                   const found = assigneesList.find(a => a.name === e.target.value);
@@ -236,8 +244,10 @@ export const SidePeekDrawer = () => {
 
             {/* Due Date Picker */}
             <div>
-              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Target Date</span>
+              <label htmlFor="drawer-item-due-date" className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Target Date</label>
               <input
+                id="drawer-item-due-date"
+                name="due_date"
                 type="date"
                 value={selectedItem.dueDate?.split('T')[0] || ''}
                 onChange={(e) => handleFieldChange('dueDate', e.target.value)}

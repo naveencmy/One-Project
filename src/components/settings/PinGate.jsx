@@ -448,7 +448,7 @@ export const PinGate = () => {
             {/* Security note */}
             <p className="mt-4 text-center text-[10px] text-gray-500 leading-relaxed">
               🔒 SHA-256 hashed · stored in{" "}
-              <code className="text-indigo-300">profile_data.xlsx</code>
+              <code className="text-indigo-300">PostgreSQL</code>
               {selectedProfile ? ` · row for ${selectedProfile.name}` : ""}
             </p>
           </div>

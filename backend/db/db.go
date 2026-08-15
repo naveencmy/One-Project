@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,7 +25,8 @@ func GetDatabaseURL() string {
 
 	for _, envPath := range []string{".env", "../.env"} {
 		if data, err := os.ReadFile(envPath); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
 				line = strings.TrimSpace(line)
 				if strings.HasPrefix(line, "DATABASE_URL=") {
 					val := strings.TrimSpace(strings.TrimPrefix(line, "DATABASE_URL="))
@@ -42,6 +44,7 @@ func GetDatabaseURL() string {
 func parsePoolConfig(connStr string) (*pgxpool.Config, error) {
 	config, err := pgxpool.ParseConfig(connStr)
 	if err == nil {
+		config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 		return config, nil
 	}
 
@@ -86,7 +89,12 @@ func parsePoolConfig(connStr string) (*pgxpool.Config, error) {
 		}
 
 		kvStr := fmt.Sprintf("host=%s port=%s user=%s password='%s' dbname=%s", host, port, user, password, dbname)
-		return pgxpool.ParseConfig(kvStr)
+		parsed, parseErr := pgxpool.ParseConfig(kvStr)
+		if parseErr == nil {
+			parsed.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+			return parsed, nil
+		}
+		return nil, parseErr
 	}
 
 	return nil, err
@@ -170,7 +178,42 @@ func migrateSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	`
 
 	_, err := pool.Exec(ctx, schemaSQL)
-	return err
+	if err != nil {
+		return err
+	}
+
+	teamProfiles := []struct {
+		id, name, role, email, dept, accent, pin, avatar string
+	}{
+		{"PROF-001", "Naveen Kumar ME", "Team Lead", "nks3244587@gmail.com", "GenAI Core", "#5E6AD2", "4ee813262a515c9aace96ef879e65667855c4ec290ca31f5bd49eb69a5e05ae7", "https://avatars.githubusercontent.com/u/189141019?v=4&size=64"},
+		{"PROF-002", "Mukesh T", "Principal DBA / MLOps", "mtdev8386@gmail.com", "Backend /Systems", "#10B981", "a5266239ab5a99c8456d926461b67c9953887f857fd3a7d86dc399e5012b9a5d", "https://media.licdn.com/dms/image/v2/D5603AQE4KLkWLfRCVw/profile-displayphoto-scale_400_400/B56ZjwuZI2HMAo-/0/1756385352773?e=1788393600&v=beta&t=DtexI3bPy8_EZTPd8k9Eq6fVAvWV5NDBBxa0EGuQ7JQ"},
+		{"PROF-003", "Prithiv Krishna G", "Forward Deployment Engineer", "prithivkrishna1116@gmail.com", "CIC / Deployment", "#3B82F6", "aeb32cfe00d196040e9758c276853282721fbd222038a54e9ae04d6686066e1b", "https://media.licdn.com/dms/image/v2/D5603AQGI7IvLhdydYw/profile-displayphoto-scale_400_400/B56ZzJ1xcxH8Ag-/0/1772912845281?e=1788393600&v=beta&t=5Dv6ZFeIxF8k3NTQ7QlcF3aIyxcc8W9F4dcC9_Lkme0"},
+		{"PROF-004", "MOHAMED SUHAIL J", "Business analyst", "mohamedsuhails507@gmail.com", "Gen AI", "#F59E0B", "594686bcfe8a1c52aa5c6ab2feadeac31c7fbc9815ad68487b60d946a12e4765", "https://media.licdn.com/dms/image/v2/D5603AQFzHYv-WMLFNQ/profile-displayphoto-shrink_400_400/B56ZU7f8K7GUAs-/0/1740459984578?e=1788393600&v=beta&t=BX0iwSCbFRUTTQdBnNUXk2gfl5SK5-lwUoyIsX4BxKk"},
+	}
+
+	for _, p := range teamProfiles {
+		avatarArr := []string{}
+		if p.avatar != "" {
+			avatarArr = []string{p.avatar}
+		}
+		_, err := pool.Exec(ctx, `
+			INSERT INTO profile_data ("ProfileID", "Name", "Email", "Role", "Department", "AccentColor", "PinHash", "UpdatedAt", "Avatar")
+			VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
+			ON CONFLICT ("ProfileID") DO UPDATE SET
+				"Name" = EXCLUDED."Name",
+				"Email" = EXCLUDED."Email",
+				"Role" = EXCLUDED."Role",
+				"Department" = EXCLUDED."Department",
+				"AccentColor" = EXCLUDED."AccentColor",
+				"PinHash" = EXCLUDED."PinHash",
+				"Avatar" = EXCLUDED."Avatar"
+		`, p.id, p.name, p.email, p.role, p.dept, p.accent, p.pin, avatarArr)
+		if err != nil {
+			log.Printf("Error upserting profile %s: %v", p.id, err)
+		}
+	}
+
+	return nil
 }
 
 func loadPinFromEnv() string {

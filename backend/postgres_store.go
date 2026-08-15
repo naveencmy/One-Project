@@ -100,7 +100,7 @@ func GetAllItems() ([]Item, error) {
 	defer cancel()
 
 	if db.Pool == nil {
-		return []Item{}, fmt.Errorf("database pool is not initialized")
+		return []Item{}, nil
 	}
 
 	query := `
@@ -243,13 +243,13 @@ func GetAllProfiles() ([]ProfileData, error) {
 	defer cancel()
 
 	if db.Pool == nil {
-		return []ProfileData{}, fmt.Errorf("database pool is not initialized")
+		return []ProfileData{}, nil
 	}
 
 	query := `
-		SELECT profile_id, name, email, role, department, accent_color, pin_hash, updated_at, avatar
+		SELECT "ProfileID", "Name", "Email", "Role", "Department", "AccentColor", "PinHash", "UpdatedAt", "Avatar"
 		FROM profile_data
-		ORDER BY profile_id
+		ORDER BY "ProfileID"
 	`
 
 	rows, err := db.Pool.Query(ctx, query)
@@ -313,9 +313,9 @@ func GetProfileByID(profileID string) (*ProfileData, error) {
 	}
 
 	query := `
-		SELECT profile_id, name, email, role, department, accent_color, pin_hash, updated_at, avatar
+		SELECT "ProfileID", "Name", "Email", "Role", "Department", "AccentColor", "PinHash", "UpdatedAt", "Avatar"
 		FROM profile_data
-		WHERE profile_id = $1
+		WHERE "ProfileID" = $1
 	`
 
 	var p ProfileData
@@ -372,8 +372,8 @@ func SaveProfileByID(profileID string, data map[string]string) error {
 
 	query := `
 		UPDATE profile_data
-		SET name = $1, role = $2, email = $3, department = $4, accent_color = $5, avatar = $6, updated_at = NOW()
-		WHERE profile_id = $7
+		SET "Name" = $1, "Role" = $2, "Email" = $3, "Department" = $4, "AccentColor" = $5, "Avatar" = $6, "UpdatedAt" = NOW()
+		WHERE "ProfileID" = $7
 	`
 
 	_, err = db.Pool.Exec(ctx, query, name, role, email, dept, accent, avatarArray, profileID)
@@ -391,8 +391,8 @@ func SavePinHashByID(profileID, hash string) error {
 	clean := cleanHash(hash)
 	query := `
 		UPDATE profile_data
-		SET pin_hash = $1, updated_at = NOW()
-		WHERE profile_id = $2
+		SET "PinHash" = $1, "UpdatedAt" = NOW()
+		WHERE "ProfileID" = $2
 	`
 
 	_, err := db.Pool.Exec(ctx, query, clean, profileID)
@@ -439,7 +439,7 @@ func AddNewProfile(data map[string]string) (string, error) {
 	}
 
 	query := `
-		INSERT INTO profile_data (profile_id, name, role, email, department, accent_color, pin_hash, updated_at, avatar)
+		INSERT INTO profile_data ("ProfileID", "Name", "Role", "Email", "Department", "AccentColor", "PinHash", "UpdatedAt", "Avatar")
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
 	`
 
@@ -459,7 +459,7 @@ func DeleteProfileByID(profileID string) error {
 		return fmt.Errorf("database pool is not initialized")
 	}
 
-	_, err := db.Pool.Exec(ctx, `DELETE FROM profile_data WHERE profile_id = $1`, profileID)
+	_, err := db.Pool.Exec(ctx, `DELETE FROM profile_data WHERE "ProfileID" = $1`, profileID)
 	return err
 }
 
@@ -533,7 +533,7 @@ func IsConfigured() bool {
 	}
 
 	var count int
-	err := db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM profile_data WHERE pin_hash IS NOT NULL AND pin_hash != ''").Scan(&count)
+	err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM profile_data WHERE "PinHash" IS NOT NULL AND "PinHash" != ''`).Scan(&count)
 	if err == nil && count > 0 {
 		return true
 	}

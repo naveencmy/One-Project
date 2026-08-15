@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"workspace-backend/db"
 )
 
 func TestHealthEndpoint(t *testing.T) {
@@ -44,4 +45,32 @@ func TestProfileListEndpoint(t *testing.T) {
 	if rr.Code != http.StatusOK && rr.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 200 or 500 for /api/profiles/list, got %d", rr.Code)
 	}
+}
+
+func TestInspectSchema(t *testing.T) {
+	pool, err := db.InitDB()
+	if err != nil {
+		t.Skipf("DB connection skipped: %v", err)
+	}
+
+	rows, err := pool.Query(t.Context(), "SELECT column_name FROM information_schema.columns WHERE table_name = 'profile_data'")
+	if err != nil {
+		t.Fatalf("Failed to query information_schema: %v", err)
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err == nil {
+			cols = append(cols, col)
+		}
+	}
+	t.Logf("Columns in profile_data: %v", cols)
+
+	profiles, err := GetAllProfiles()
+	if err != nil {
+		t.Fatalf("GetAllProfiles failed: %v", err)
+	}
+	t.Logf("Retrieved %d profiles from Supabase: %+v", len(profiles), profiles)
 }

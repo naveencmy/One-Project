@@ -54,6 +54,8 @@ export const Header = () => {
   return (
     <header className="sticky top-0 z-20 bg-[#0B0B0C]/95 backdrop-blur-md border-b border-[#262626] px-3 sm:px-4 py-2.5 flex flex-col gap-2">
       <input 
+        id="excel-file-input"
+        name="excel_file"
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
@@ -113,6 +115,8 @@ export const Header = () => {
           <div className="relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
+              id="global-header-search"
+              name="global_search"
               type="text"
               placeholder="Search across title, identifier, tags, assignee or citations... (/)"
               value={searchQuery}
@@ -185,6 +189,8 @@ export const Header = () => {
       <div className="relative sm:hidden">
         <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
         <input
+          id="mobile-header-search"
+          name="mobile_search"
           type="text"
           placeholder="Search all tracking nodes..."
           value={searchQuery}
@@ -235,6 +241,8 @@ export const Header = () => {
             {/* Priority Select */}
             <div className="flex items-center gap-1">
               <select
+                id="header-filter-priority"
+                name="filter_priority"
                 value={priorityFilter}
                 onChange={(e) => setPriorityFilter(e.target.value)}
                 className="bg-[#151516] border border-[#262626] text-gray-300 rounded px-1.5 sm:px-2 py-1 text-xs focus:outline-none"
@@ -250,6 +258,8 @@ export const Header = () => {
             {/* Status Select */}
             <div className="flex items-center gap-1">
               <select
+                id="header-filter-status"
+                name="filter_status"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="bg-[#151516] border border-[#262626] text-gray-300 rounded px-1.5 sm:px-2 py-1 text-xs focus:outline-none"
@@ -267,6 +277,8 @@ export const Header = () => {
             <div className="flex items-center gap-1">
               <ArrowUpDown className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
               <select
+                id="header-sort-by"
+                name="sort_by"
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 className="bg-[#151516] border border-[#5E6AD2]/50 text-indigo-200 font-medium rounded px-1.5 sm:px-2 py-1 text-xs focus:outline-none"

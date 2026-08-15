@@ -151,10 +151,12 @@ export const CreateTaskModal = () => {
 
           {/* Title Input */}
           <div>
-            <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">
+            <label htmlFor="task-title" className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">
               Subject Title *
             </label>
             <input
+              id="task-title"
+              name="title"
               type="text"
               required
               placeholder="e.g. Distributed Vector DB Refactor or Dissertation Defense..."
@@ -167,8 +169,10 @@ export const CreateTaskModal = () => {
           {/* Attributes Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
-              <label className="text-[10px] text-gray-400 block mb-1">Priority</label>
+              <label htmlFor="task-priority" className="text-[10px] text-gray-400 block mb-1">Priority</label>
               <select
+                id="task-priority"
+                name="priority"
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
                 className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-2 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
@@ -180,8 +184,10 @@ export const CreateTaskModal = () => {
             </div>
 
             <div>
-              <label className="text-[10px] text-gray-400 block mb-1">Status</label>
+              <label htmlFor="task-status" className="text-[10px] text-gray-400 block mb-1">Status</label>
               <select
+                id="task-status"
+                name="status"
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
                 className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-2 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
@@ -193,8 +199,10 @@ export const CreateTaskModal = () => {
             </div>
 
             <div>
-              <label className="text-[10px] text-gray-400 block mb-1">Assignee</label>
+              <label htmlFor="task-assignee" className="text-[10px] text-gray-400 block mb-1">Assignee</label>
               <select
+                id="task-assignee"
+                name="assignee"
                 value={assigneeName}
                 onChange={(e) => setAssigneeName(e.target.value)}
                 className="w-full bg-[#1A1A1E] border border-[#262626] rounded px-2 py-1.5 text-white focus:outline-none focus:border-[#5E6AD2]"
@@ -206,8 +214,10 @@ export const CreateTaskModal = () => {
             </div>
 
             <div>
-              <label className="text-[10px] text-gray-400 block mb-1">Target Date</label>
+              <label htmlFor="task-due-date" className="text-[10px] text-gray-400 block mb-1">Target Date</label>
               <input
+                id="task-due-date"
+                name="due_date"
                 type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
@@ -225,6 +235,8 @@ export const CreateTaskModal = () => {
             {domain === 'projects' && (
               <div className="grid grid-cols-2 gap-2">
                 <input
+                  id="task-repo-url"
+                  name="repo_url"
                   type="text"
                   placeholder="Repo URL (github.com/org/repo)"
                   value={repoUrl}
@@ -232,6 +244,8 @@ export const CreateTaskModal = () => {
                   className="bg-[#151516] border border-[#262626] rounded px-2 py-1 text-blue-300 font-mono"
                 />
                 <input
+                  id="task-target-release"
+                  name="target_release"
                   type="text"
                   placeholder="Target Release (v2.4)"
                   value={targetRelease}
@@ -244,6 +258,8 @@ export const CreateTaskModal = () => {
             {domain === 'academic' && (
               <div className="grid grid-cols-2 gap-2">
                 <input
+                  id="task-paper-title"
+                  name="paper_title"
                   type="text"
                   placeholder="Paper / Literature Title"
                   value={paperTitle}
@@ -251,6 +267,8 @@ export const CreateTaskModal = () => {
                   className="bg-[#151516] border border-[#262626] rounded px-2 py-1 text-emerald-300"
                 />
                 <input
+                  id="task-pub-target"
+                  name="publication_target"
                   type="text"
                   placeholder="Publication Target (IEEE / ACM)"
                   value={publicationTarget}
@@ -263,6 +281,8 @@ export const CreateTaskModal = () => {
             {domain === 'events' && (
               <div className="grid grid-cols-2 gap-2">
                 <input
+                  id="task-event-type"
+                  name="event_type"
                   type="text"
                   placeholder="Event Type (Defense/Symposium)"
                   value={eventType}
@@ -270,6 +290,8 @@ export const CreateTaskModal = () => {
                   className="bg-[#151516] border border-[#262626] rounded px-2 py-1 text-amber-300"
                 />
                 <input
+                  id="task-location-coords"
+                  name="location_coordinates"
                   type="text"
                   placeholder="Location / Zoom URL"
                   value={locationCoordinates}
@@ -281,6 +303,8 @@ export const CreateTaskModal = () => {
 
             {domain === 'teams' && (
               <input
+                id="task-throughput-velocity"
+                name="throughput_velocity"
                 type="text"
                 placeholder="Throughput Velocity (e.g. 45 pts/sprint)"
                 value={throughputVelocity}
@@ -291,6 +315,8 @@ export const CreateTaskModal = () => {
 
             {domain === 'other' && (
               <input
+                id="task-compliance-id"
+                name="compliance_id"
                 type="text"
                 placeholder="Compliance ID (e.g. ISO-27001)"
                 value={complianceId}
@@ -302,8 +328,10 @@ export const CreateTaskModal = () => {
 
           {/* Tags */}
           <div>
-            <label className="text-[10px] text-gray-400 block mb-1">Tags (Comma-separated)</label>
+            <label htmlFor="task-tags-input" className="text-[10px] text-gray-400 block mb-1">Tags (Comma-separated)</label>
             <input
+              id="task-tags-input"
+              name="tags"
               type="text"
               placeholder="Rust, SIMD, Defense, Audit..."
               value={tagsInput}
@@ -314,8 +342,10 @@ export const CreateTaskModal = () => {
 
           {/* Description */}
           <div>
-            <label className="text-[10px] text-gray-400 block mb-1">Description Notes</label>
+            <label htmlFor="task-description" className="text-[10px] text-gray-400 block mb-1">Description Notes</label>
             <textarea
+              id="task-description"
+              name="description"
               rows={2}
               placeholder="Context notes..."
               value={description}
