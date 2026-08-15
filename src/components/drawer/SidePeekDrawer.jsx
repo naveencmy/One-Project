@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { DOMAINS, PRIORITIES, STATUSES } from '../../types/schema';
+import { getShortId } from '../../utils/formatters';
 
 export const SidePeekDrawer = () => {
   const { 
