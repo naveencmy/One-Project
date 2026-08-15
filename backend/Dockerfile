@@ -1,5 +1,5 @@
 # Multi-stage Go Build for Production
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -25,6 +25,6 @@ COPY --from=builder /app/server .
 EXPOSE 8080
 
 ENV PORT=8080
-ENV ALLOWED_ORIGIN=http://localhost:80
+ENV ALLOWED_ORIGIN=*
 
 CMD ["./server"]

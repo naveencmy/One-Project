@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,9 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-const ExcelFilePath = "workspace_data.xlsx"
+	"workspace-backend/db"
+)
 
 // ── Rate Limiter ──────────────────────────────────────────────────────────────
 
@@ -98,13 +99,11 @@ func loadPortFromEnv() string {
 			}
 		}
 	}
-	return "8085"
+	return "8080"
 }
 
 // ── Auth Middleware Helper ────────────────────────────────────────────────────
 
-// extractSessionUser reads the Bearer token from the Authorization header
-// and returns the UserSession if valid, or nil if missing/invalid.
 func extractSessionUser(r *http.Request) *UserSession {
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -114,7 +113,6 @@ func extractSessionUser(r *http.Request) *UserSession {
 	return GetSessionUser(token)
 }
 
-// requireAuth returns the session user or writes a 401 and returns nil.
 func requireAuth(w http.ResponseWriter, r *http.Request) *UserSession {
 	user := extractSessionUser(r)
 	if user == nil {
@@ -123,7 +121,6 @@ func requireAuth(w http.ResponseWriter, r *http.Request) *UserSession {
 	return user
 }
 
-// requireTeamLead checks that the session user is a Team Lead. Returns nil and writes 403 if not.
 func requireTeamLead(w http.ResponseWriter, r *http.Request) *UserSession {
 	user := requireAuth(w, r)
 	if user == nil {
@@ -136,41 +133,46 @@ func requireTeamLead(w http.ResponseWriter, r *http.Request) *UserSession {
 	return user
 }
 
+var sessionMu sync.Mutex
+
 func main() {
-	if err := InitExcelStore(ExcelFilePath); err != nil {
-		log.Fatalf("Fatal error initializing Excel store: %v", err)
+	if _, err := db.InitDB(); err != nil {
+		log.Printf("Warning initializing database connection: %v", err)
 	}
 
+	// ── Health check routes ───────────────────────────────────────────────────
+	http.HandleFunc("/healthz", handleHealth)
+	http.HandleFunc("/api/health", handleHealth)
+
 	// ── Auth routes ──────────────────────────────────────────────────────────
-	http.HandleFunc("/api/auth/status",   handleAuthStatus)
-	http.HandleFunc("/api/auth/verify",   handleAuthVerify)
-	http.HandleFunc("/api/auth/setup",    handleAuthSetup)
+	http.HandleFunc("/api/auth/status", handleAuthStatus)
+	http.HandleFunc("/api/auth/verify", handleAuthVerify)
+	http.HandleFunc("/api/auth/setup", handleAuthSetup)
 	http.HandleFunc("/api/auth/validate", handleAuthValidate)
 
 	// ── Multi-Profile routes ─────────────────────────────────────────────────
-	http.HandleFunc("/api/profiles/list",   handleProfileList)    // GET  — public (no auth needed for picker)
-	http.HandleFunc("/api/profiles/create", handleProfileCreate)  // POST — Team Lead only
-	http.HandleFunc("/api/profiles/",       handleProfileByID)    // GET/PUT/DELETE /{id}
-	// Auth setup for specific profile (non-lead setting their own PIN)
-	http.HandleFunc("/api/profiles/pin",    handleProfilePin)     // PUT  — own profile only
+	http.HandleFunc("/api/profiles/list", handleProfileList)   // GET  — public
+	http.HandleFunc("/api/profiles/create", handleProfileCreate) // POST — Team Lead only
+	http.HandleFunc("/api/profiles/", handleProfileByID)       // GET/PUT/DELETE /{id}
+	http.HandleFunc("/api/profiles/pin", handleProfilePin)     // PUT  — own profile only
 
 	// ── Legacy single-profile compat ─────────────────────────────────────────
-	http.HandleFunc("/api/profile",       handleProfile)
-	http.HandleFunc("/api/profile/pin",   handlePinHash)
+	http.HandleFunc("/api/profile", handleProfile)
+	http.HandleFunc("/api/profile/pin", handlePinHash)
 
 	// ── Data routes ──────────────────────────────────────────────────────────
-	http.HandleFunc("/api/items",         handleItems)
+	http.HandleFunc("/api/items", handleItems)
 	http.HandleFunc("/api/items/comment", handleComment)
-	http.HandleFunc("/api/excel/export",  handleExcelExport)
-	http.HandleFunc("/api/excel/import",  handleExcelImport)
-	http.HandleFunc("/api/excel/sheets",  handleExcelSheets)
-	http.HandleFunc("/api/assignees",     handleAssignees)
+	http.HandleFunc("/api/excel/export", handleExcelExport)
+	http.HandleFunc("/api/excel/import", handleExcelImport)
+	http.HandleFunc("/api/excel/sheets", handleExcelSheets)
+	http.HandleFunc("/api/assignees", handleAssignees)
 
 	port := loadPortFromEnv()
 
 	fmt.Printf("\n⚡ Nexus Go Backend  →  http://localhost:%s\n", port)
-	fmt.Printf("📊 Excel Engine: %s (6-sheet schema)\n", ExcelFilePath)
-	fmt.Printf("🔐 PIN Configured: %t\n", IsConfigured(ExcelFilePath))
+	fmt.Printf("🗄️ Database Engine: Supabase PostgreSQL\n")
+	fmt.Printf("🔐 PIN Configured: %t\n", IsConfigured())
 	fmt.Printf("🛡️  CORS Origin: %s\n\n", os.Getenv("ALLOWED_ORIGIN"))
 
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
@@ -178,9 +180,37 @@ func main() {
 	}
 }
 
+// ── Health Check Handler ──────────────────────────────────────────────────────
+
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	if enableCORS(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	if err := db.Ping(ctx); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "error",
+			"database": "disconnected",
+			"error":    err.Error(),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "ok",
+		"database": "connected",
+		"time":     time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 // ── Auth Handlers ─────────────────────────────────────────────────────────────
 
-// GET /api/auth/status
 func handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -192,7 +222,7 @@ func handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	configured := IsConfigured(ExcelFilePath)
+	configured := IsConfigured()
 
 	sessionValid := false
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
@@ -212,9 +242,6 @@ func cleanHash(s string) string {
 	return strings.ToLower(s)
 }
 
-// POST /api/auth/verify
-// Now accepts { "profile_id": "PROF-001", "pin_hash": "sha256hex" }
-// If profile_id is omitted, defaults to "PROF-001" for backward compat.
 func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -253,13 +280,11 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default to Team Lead if no profile specified
 	profileID := strings.TrimSpace(req.ProfileID)
 	if profileID == "" {
 		profileID = "PROF-001"
 	}
 
-	// Load the specific profile
 	profile, err := GetProfileByID(profileID)
 	if err != nil {
 		http.Error(w, `{"error":"profile not found"}`, http.StatusUnauthorized)
@@ -293,8 +318,6 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/auth/setup
-// Sets initial PIN for Team Lead (PROF-001) — returns 409 Conflict if PIN already configured.
 func handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -322,12 +345,11 @@ func handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := SetupPin(ExcelFilePath, req.PinHash); err != nil {
+	if err := SetupPin(req.PinHash); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
 		return
 	}
 
-	// Load profile to get name/role for token
 	profile, _ := GetProfileByID("PROF-001")
 	name := ""
 	role := roleTeamLead
@@ -352,7 +374,6 @@ func handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /api/auth/validate
 func handleAuthValidate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -368,7 +389,6 @@ func handleAuthValidate(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	valid := ValidateSessionToken(token)
 
-	// Also return profile info if valid
 	if valid {
 		user := GetSessionUser(token)
 		if user != nil {
@@ -387,7 +407,6 @@ func handleAuthValidate(w http.ResponseWriter, r *http.Request) {
 
 // ── Multi-Profile Handlers ────────────────────────────────────────────────────
 
-// GET /api/profiles/list — public, returns safe list (no pin hashes)
 func handleProfileList(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -410,7 +429,6 @@ func handleProfileList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-// POST /api/profiles/create — Team Lead only
 func handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -445,7 +463,6 @@ func handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the new profile (safe, no pin hash)
 	profile, _ := GetProfileByID(newID)
 	if profile != nil {
 		json.NewEncoder(w).Encode(ProfileListItem{
@@ -462,21 +479,25 @@ func handleProfileCreate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET/PUT/DELETE /api/profiles/{id}
-// GET: returns profile data (own profile always; Team Lead can get any)
-// PUT: own profile only; Team Lead can edit any
-// DELETE: Team Lead only; cannot delete PROF-001
 func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 
-	// Extract profile ID from URL path: /api/profiles/PROF-001
 	path := strings.TrimPrefix(r.URL.Path, "/api/profiles/")
-	// Skip the sub-routes handled by other handlers
-	if path == "list" || path == "create" || path == "pin" || path == "" {
-		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	switch path {
+	case "list":
+		handleProfileList(w, r)
+		return
+	case "create":
+		handleProfileCreate(w, r)
+		return
+	case "pin":
+		handleProfilePin(w, r)
+		return
+	case "":
+		http.Error(w, `{"error":"profile_id required in path"}`, http.StatusBadRequest)
 		return
 	}
 	profileID := strings.Split(path, "/")[0]
@@ -492,7 +513,6 @@ func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		// Own profile or Team Lead can get any
 		if user.ProfileID != profileID && user.Role != roleTeamLead {
 			http.Error(w, `{"error":"forbidden: you can only view your own profile"}`, http.StatusForbidden)
 			return
@@ -502,7 +522,6 @@ func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"profile not found"}`, http.StatusNotFound)
 			return
 		}
-		// Return safe version without pin_hash
 		json.NewEncoder(w).Encode(map[string]string{
 			"profile_id":  profile.ProfileID,
 			"name":        profile.Name,
@@ -515,7 +534,6 @@ func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
-		// Own profile only; Team Lead can edit any
 		if user.ProfileID != profileID && user.Role != roleTeamLead {
 			http.Error(w, `{"error":"forbidden: you can only edit your own profile"}`, http.StatusForbidden)
 			return
@@ -527,11 +545,9 @@ func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
 			return
 		}
-		// Strip pin_hash — use the /api/profiles/pin endpoint for that
 		delete(data, "pin_hash")
 		delete(data, "pinHash")
 
-		// Non-leads cannot change their own role
 		if user.Role != roleTeamLead {
 			delete(data, "role")
 		}
@@ -543,7 +559,6 @@ func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
 
 	case http.MethodDelete:
-		// Team Lead only
 		if user.Role != roleTeamLead {
 			http.Error(w, `{"error":"forbidden: Team Lead access required"}`, http.StatusForbidden)
 			return
@@ -559,10 +574,6 @@ func handleProfileByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// PUT /api/profiles/pin — set/update PIN for a specific profile
-// Body: { "profile_id": "PROF-002", "pin_hash": "sha256hex" }
-// Rule: can only set own pin; Team Lead can set anyone's pin.
-// If no PIN exists yet → allowed (setup). If PIN exists → requires current PIN verification (done client-side via /verify first).
 func handleProfilePin(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
@@ -598,10 +609,8 @@ func handleProfilePin(w http.ResponseWriter, r *http.Request) {
 
 	targetProfileID := strings.TrimSpace(req.ProfileID)
 
-	// If no auth token → this is a first-time PIN setup (profile has no PIN yet)
 	user := extractSessionUser(r)
 	if user == nil {
-		// Allow PIN setup only if that profile has no PIN yet
 		if targetProfileID == "" {
 			targetProfileID = "PROF-001"
 		}
@@ -609,7 +618,6 @@ func handleProfilePin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
 			return
 		}
-		// Issue a session token
 		profile, _ := GetProfileByID(targetProfileID)
 		name := ""
 		role := ""
@@ -623,7 +631,6 @@ func handleProfilePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticated: own pin or team lead can change any
 	if targetProfileID == "" {
 		targetProfileID = user.ProfileID
 	}
@@ -640,7 +647,7 @@ func handleProfilePin(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "pin_updated", "profile_id": targetProfileID})
 }
 
-// ── Excel Sheets Handler ──────────────────────────────────────────────────────
+// ── Sheets Handler ──────────────────────────────────────────────────────────
 
 func handleExcelSheets(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
@@ -648,7 +655,7 @@ func handleExcelSheets(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 
-	sheets, err := GetSheetsInfo(ExcelFilePath)
+	sheets, err := GetSheetsInfo()
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 		return
@@ -666,7 +673,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		items, err := GetAllItems(ExcelFilePath)
+		items, err := GetAllItems()
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
@@ -680,30 +687,8 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if newItem.ID == "" {
-			prefix := "NEX"
-			prefixMap := map[string]string{
-				"projects": "PRJ", "academic": "ACA",
-				"events": "EVT", "teams": "TEM", "other": "OTH",
-			}
-			if val, ok := prefixMap[newItem.Domain]; ok {
-				prefix = val
-			}
-			newItem.ID = fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano()%1000+100)
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		if newItem.CreatedAt == "" {
-			newItem.CreatedAt = now
-		}
-		newItem.UpdatedAt = now
-
-		items, err := GetAllItems(ExcelFilePath)
-		if err != nil {
-			items = []Item{}
-		}
-		items = append([]Item{newItem}, items...)
-		if err := SaveAllItems(ExcelFilePath, items); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"failed to write Excel: %v"}`, err), http.StatusInternalServerError)
+		if err := SaveItem(newItem); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"failed to save item: %v"}`, err), http.StatusInternalServerError)
 			return
 		}
 
@@ -715,28 +700,9 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
 			return
 		}
-		updatedItem.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-		items, err := GetAllItems(ExcelFilePath)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-
-		found := false
-		for i, item := range items {
-			if item.ID == updatedItem.ID {
-				items[i] = updatedItem
-				found = true
-				break
-			}
-		}
-		if !found {
-			items = append([]Item{updatedItem}, items...)
-		}
-
-		if err := SaveAllItems(ExcelFilePath, items); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"failed to update Excel: %v"}`, err), http.StatusInternalServerError)
+		if err := SaveItem(updatedItem); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"failed to update item: %v"}`, err), http.StatusInternalServerError)
 			return
 		}
 
@@ -749,21 +715,8 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		items, err := GetAllItems(ExcelFilePath)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
-			return
-		}
-
-		var filtered []Item
-		for _, item := range items {
-			if item.ID != id {
-				filtered = append(filtered, item)
-			}
-		}
-
-		if err := SaveAllItems(ExcelFilePath, filtered); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"failed to delete from Excel: %v"}`, err), http.StatusInternalServerError)
+		if err := DeleteItem(id); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"failed to delete item: %v"}`, err), http.StatusInternalServerError)
 			return
 		}
 
@@ -800,7 +753,7 @@ func handleComment(w http.ResponseWriter, r *http.Request) {
 		req.User = "User"
 	}
 
-	items, err := GetAllItems(ExcelFilePath)
+	items, err := GetAllItems()
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 		return
@@ -828,22 +781,29 @@ func handleComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := SaveAllItems(ExcelFilePath, items); err != nil {
+	if err := SaveItem(updatedItem); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(updatedItem)
 }
 
-// ── Excel Export / Import ─────────────────────────────────────────────────────
+// ── Import / Export Handlers ──────────────────────────────────────────────────
 
 func handleExcelExport(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
 		return
 	}
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, ExcelFilePath))
-	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	http.ServeFile(w, r, ExcelFilePath)
+	w.Header().Set("Content-Disposition", `attachment; filename="workspace_export.json"`)
+	w.Header().Set("Content-Type", "application/json")
+
+	items, err := GetAllItems()
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to export items: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(items)
 }
 
 func handleExcelImport(w http.ResponseWriter, r *http.Request) {
@@ -864,21 +824,20 @@ func handleExcelImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	out, err := os.Create(ExcelFilePath)
+	content, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to create target file: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, file); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to save imported file: %v"}`, err), http.StatusInternalServerError)
+		http.Error(w, `{"error":"failed to read file content"}`, http.StatusBadRequest)
 		return
 	}
 
-	items, err := GetAllItems(ExcelFilePath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to parse imported excel: %v"}`, err), http.StatusInternalServerError)
+	var items []Item
+	if err := json.Unmarshal(content, &items); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"invalid JSON items format: %v"}`, err), http.StatusBadRequest)
+		return
+	}
+
+	if err := SaveAllItems(items); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to save imported items: %v"}`, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -889,7 +848,7 @@ func handleExcelImport(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ── Legacy Profile Handler (backward compat — Team Lead profile only) ─────────
+// ── Legacy Profile Handler ────────────────────────────────────────────────────
 
 func handleProfile(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
@@ -899,12 +858,11 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		profile, err := GetProfile(ExcelFilePath)
+		profile, err := GetProfile()
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
-		// Strip pin_hash before sending
 		delete(profile, "pin_hash")
 		json.NewEncoder(w).Encode(profile)
 
@@ -916,7 +874,7 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(incoming, "pin_hash")
 
-		if err := SaveProfile(ExcelFilePath, incoming); err != nil {
+		if err := SaveProfile(incoming); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
@@ -926,8 +884,6 @@ func handleProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
 }
-
-// ── Legacy PIN Hash Handler ───────────────────────────────────────────────────
 
 func handlePinHash(w http.ResponseWriter, r *http.Request) {
 	if enableCORS(w, r) {
@@ -956,7 +912,7 @@ func handlePinHash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := SavePinHash(ExcelFilePath, req.PinHash); err != nil {
+	if err := SavePinHash(req.PinHash); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 		return
 	}
@@ -974,7 +930,7 @@ func handleAssignees(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		assignees, err := GetAssignees(ExcelFilePath)
+		assignees, err := GetAssignees()
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
@@ -987,7 +943,7 @@ func handleAssignees(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
 			return
 		}
-		if err := SaveAssignees(ExcelFilePath, assignees); err != nil {
+		if err := SaveAssignees(assignees); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
 			return
 		}
