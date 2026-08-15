@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { DOMAINS, PRIORITIES, STATUSES } from '../../types/schema';
+import { getShortId } from '../../utils/formatters';
 
 export const IssuesDataStack = () => {
   const { 
@@ -263,7 +264,7 @@ export const IssuesDataStack = () => {
                           className="px-2 py-0.5 rounded text-[10px]"
                           style={{ backgroundColor: `${dom.color}15`, color: dom.color, border: `1px solid ${dom.color}30` }}
                         >
-                          {item.id}
+                          {getShortId(item.id, item.domain)}
                         </span>
                       </td>
 
@@ -278,28 +279,16 @@ export const IssuesDataStack = () => {
                         <div className="font-semibold text-white group-hover:text-indigo-200 transition-colors line-clamp-1">
                           {item.title}
                         </div>
-                        {item.tags?.length > 0 && (
-                          <div className="flex items-center gap-1.5 mt-1">
-                            {item.tags.slice(0, 3).map((tag, i) => (
-                              <span key={i} className="text-[10px] bg-zinc-800 text-gray-400 px-1.5 py-0.2 rounded font-mono">
-                                #{tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
                       </td>
 
                       <td className="py-3 px-3">
-                        <span className={`inline-block text-[10px] font-mono px-2 py-0.5 rounded font-semibold ${statusMeta.badgeBg} ${statusMeta.badgeText}`}>
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium ${statusMeta.badgeBg} ${statusMeta.badgeText}`}>
                           {statusMeta.label}
                         </span>
                       </td>
 
                       <td className="py-3 px-3">
-                        <span 
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold"
-                          style={{ color: priorityMeta.color }}
-                        >
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium ${priorityMeta.badgeBg} ${priorityMeta.badgeText}`}>
                           {item.priority === 'urgent' && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
                           {priorityMeta.label}
                         </span>
@@ -308,11 +297,17 @@ export const IssuesDataStack = () => {
                       <td className="py-3 px-3">
                         {item.assignee ? (
                           <div className="flex items-center gap-2">
-                            <img 
-                              src={item.assignee.avatar} 
-                              alt={item.assignee.name} 
-                              className="w-5 h-5 rounded-full object-cover border border-[#262626]"
-                            />
+                            {item.assignee.avatar ? (
+                              <img 
+                                src={item.assignee.avatar} 
+                                alt={item.assignee.name || 'Assignee'} 
+                                className="w-5 h-5 rounded-full object-cover border border-[#262626]"
+                              />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-[#5E6AD2]/20 text-[#5E6AD2] flex items-center justify-center text-[9px] font-bold">
+                                {item.assignee.name?.[0]?.toUpperCase() || 'U'}
+                              </div>
+                            )}
                             <span className="text-gray-300 text-[11px] truncate max-w-[90px]">
                               {item.assignee.name}
                             </span>
@@ -328,13 +323,11 @@ export const IssuesDataStack = () => {
 
                       <td className="py-3 px-3 text-right font-mono text-[11px] text-gray-400">
                         {item.dueDate ? (
-                          <span className="flex items-center justify-end gap-1">
+                          <span className="inline-flex items-center gap-1">
                             <Clock className="w-3 h-3 text-gray-400" />
                             {item.dueDate.split('T')[0]}
                           </span>
-                        ) : (
-                          <span>-</span>
-                        )}
+                        ) : '—'}
                       </td>
                     </tr>
                   );
@@ -373,7 +366,7 @@ export const IssuesDataStack = () => {
                         className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shrink-0"
                         style={{ backgroundColor: `${dom.color}20`, color: dom.color, border: `1px solid ${dom.color}40` }}
                       >
-                        {item.id}
+                        {getShortId(item.id, item.domain)}
                       </span>
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${dom.badgeClass} truncate`}>
                         <DomainIcon className="w-3 h-3 shrink-0" />
@@ -398,10 +391,7 @@ export const IssuesDataStack = () => {
 
                   {/* Footer Row: Priority + Assignee + Due Date */}
                   <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
-                    <span 
-                      className="font-semibold flex items-center gap-1"
-                      style={{ color: priorityMeta.color }}
-                    >
+                    <span className={`inline-flex items-center gap-1 font-medium ${priorityMeta.badgeText}`}>
                       {item.priority === 'urgent' && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
                       {priorityMeta.label}
                     </span>
@@ -409,11 +399,17 @@ export const IssuesDataStack = () => {
                     <div className="flex items-center gap-3">
                       {item.assignee && (
                         <div className="flex items-center gap-1">
-                          <img 
-                            src={item.assignee.avatar} 
-                            alt={item.assignee.name}
-                            className="w-4 h-4 rounded-full object-cover" 
-                          />
+                          {item.assignee.avatar ? (
+                            <img 
+                              src={item.assignee.avatar} 
+                              alt={item.assignee.name || 'Assignee'}
+                              className="w-4 h-4 rounded-full object-cover" 
+                            />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full bg-[#5E6AD2]/20 text-[#5E6AD2] flex items-center justify-center text-[8px] font-bold">
+                              {item.assignee.name?.[0]?.toUpperCase() || 'U'}
+                            </div>
+                          )}
                           <span className="text-gray-300 text-[10px]">{item.assignee.name.split(' ')[0]}</span>
                         </div>
                       )}

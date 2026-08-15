@@ -143,7 +143,7 @@ export const SidePeekDrawer = () => {
               className="text-xs font-mono font-bold px-2 py-0.5 rounded"
               style={{ backgroundColor: `${currentDom.color}20`, color: currentDom.color, border: `1px solid ${currentDom.color}40` }}
             >
-              {selectedItem.id}
+              {getShortId(selectedItem.id, selectedItem.domain)}
             </span>
 
             {/* Domain Badge */}

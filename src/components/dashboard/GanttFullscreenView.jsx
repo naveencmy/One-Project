@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { DOMAINS, STATUSES } from '../../types/schema';
+import { getShortId } from '../../utils/formatters';
 import { GanttChart } from './GanttChart';
 
 // ── Mini Node List Panel ──────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ const NodeListPanel = ({ items, onSelect, style }) => {
                     className="w-1.5 h-1.5 rounded-full shrink-0"
                     style={{ backgroundColor: dom.color }}
                   />
-                  <span className="text-[10px] font-mono text-gray-500 shrink-0">{item.id}</span>
+                  <span className="text-[10px] font-mono text-gray-500 shrink-0">{getShortId(item.id, item.domain)}</span>
                   <span
                     className={`ml-auto text-[9px] font-mono px-1 py-0.5 rounded shrink-0 ${status.badgeBg} ${status.badgeText}`}
                   >

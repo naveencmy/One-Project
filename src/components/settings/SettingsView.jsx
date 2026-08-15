@@ -644,7 +644,13 @@ const SettingsInnerContent = () => {
                   className="p-2.5 bg-[#1A1A1E] border border-[#262626] rounded-lg flex items-center justify-between gap-3 group hover:border-[#5E6AD2]/50 transition-colors"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <img src={person.avatar} alt={person.name} className="w-8 h-8 rounded-full object-cover border border-[#262626]" />
+                    {person.avatar ? (
+                      <img src={person.avatar} alt={person.name} className="w-8 h-8 rounded-full object-cover border border-[#262626]" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-[#5E6AD2]/20 text-[#5E6AD2] flex items-center justify-center text-xs font-bold border border-[#262626]">
+                        {(person.name || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+                      </div>
+                    )}
                     <div className="min-w-0">
                       <div className="text-xs font-semibold text-white truncate">{person.name}</div>
                       <div className="text-[10px] text-gray-400 truncate">{person.role}</div>

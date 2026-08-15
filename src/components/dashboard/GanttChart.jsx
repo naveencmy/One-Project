@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { BarChart3, Calendar, ChevronRight, Maximize2, Filter, ZoomIn } from "lucide-react";
 import { useWorkspace } from "../../context/WorkspaceContext";
 import { DOMAINS, STATUSES } from "../../types/schema";
+import { getShortId } from "../../utils/formatters";
 
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const DAY_NAMES   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -340,22 +341,22 @@ export const GanttChart = ({ showFullscreenButton = true, zoomLevel: externalZoo
                       onClick={() => openItemDetails(item.id)}
                       title={item.title}
                     >
+                      {/* ID badge */}
+                      {left > 8 && (
+                        <div className="absolute left-1 top-0 bottom-0 flex items-center z-30 pointer-events-none">
+                          <span
+                            className="text-[9px] font-mono font-semibold px-1 py-0.5 rounded"
+                            style={{ color: barColor, backgroundColor: `${barColor}15` }}
+                          >
+                            {getShortId(item.id, item.domain)}
+                          </span>
+                        </div>
+                      )}
+
                       <span className="px-2 text-[10px] font-semibold text-white truncate whitespace-nowrap leading-none">
                         {width > 8 ? item.title : ''}
                       </span>
                     </div>
-
-                    {/* ID badge */}
-                    {left > 8 && (
-                      <div className="absolute left-1 top-0 bottom-0 flex items-center z-30 pointer-events-none">
-                        <span
-                          className="text-[9px] font-mono font-semibold px-1 py-0.5 rounded"
-                          style={{ color: barColor, backgroundColor: `${barColor}15` }}
-                        >
-                          {item.id}
-                        </span>
-                      </div>
-                    )}
 
                     {/* Hover tooltip */}
                     {isHovered && (
@@ -368,7 +369,7 @@ export const GanttChart = ({ showFullscreenButton = true, zoomLevel: externalZoo
                             className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded"
                             style={{ color: dom.color, backgroundColor: `${dom.color}20`, border: `1px solid ${dom.color}40` }}
                           >
-                            {item.id}
+                            {getShortId(item.id, item.domain)}
                           </span>
                           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${status.badgeBg} ${status.badgeText}`}>
                             {status.label}
@@ -381,11 +382,17 @@ export const GanttChart = ({ showFullscreenButton = true, zoomLevel: externalZoo
                         </div>
                         {item.assignee && (
                           <div className="flex items-center gap-1.5 mt-1.5">
-                            <img
-                              src={item.assignee.avatar}
-                              alt={item.assignee.name}
-                              className="w-4 h-4 rounded-full object-cover"
-                            />
+                            {item.assignee.avatar ? (
+                              <img
+                                src={item.assignee.avatar}
+                                alt={item.assignee.name || 'Assignee'}
+                                className="w-3.5 h-3.5 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-3.5 h-3.5 rounded-full bg-[#5E6AD2]/20 text-[#5E6AD2] flex items-center justify-center text-[7px] font-bold">
+                                {item.assignee.name?.[0]?.toUpperCase() || 'U'}
+                              </div>
+                            )}
                             <span className="text-[10px] text-gray-300">{item.assignee.name}</span>
                           </div>
                         )}

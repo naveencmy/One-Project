@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { DOMAINS, PRIORITIES, STATUSES } from '../../types/schema';
+import { getShortId } from '../../utils/formatters';
 import { GanttChart } from './GanttChart';
 
 export const OverviewHub = () => {
@@ -278,7 +279,7 @@ export const OverviewHub = () => {
                         className="text-[10px] font-mono px-2 py-0.5 rounded shrink-0 font-semibold"
                         style={{ backgroundColor: `${dom.color}20`, color: dom.color, border: `1px solid ${dom.color}40` }}
                       >
-                        {item.id}
+                        {getShortId(item.id, item.domain)}
                       </span>
 
                       <div className="min-w-0">
@@ -307,12 +308,21 @@ export const OverviewHub = () => {
 
                     <div className="flex items-center gap-3 shrink-0">
                       {item.assignee && (
-                        <img
-                          src={item.assignee.avatar}
-                          alt={item.assignee.name}
-                          className="w-6 h-6 rounded-full object-cover border border-[#262626]"
-                          title={`Assigned to ${item.assignee.name}`}
-                        />
+                        item.assignee.avatar ? (
+                          <img
+                            src={item.assignee.avatar}
+                            alt={item.assignee.name || 'Assignee'}
+                            className="w-6 h-6 rounded-full object-cover border border-[#262626]"
+                            title={`Assigned to ${item.assignee.name}`}
+                          />
+                        ) : (
+                          <div 
+                            className="w-6 h-6 rounded-full bg-[#5E6AD2]/20 text-[#5E6AD2] flex items-center justify-center text-[10px] font-bold"
+                            title={`Assigned to ${item.assignee.name}`}
+                          >
+                            {item.assignee.name?.[0]?.toUpperCase() || 'U'}
+                          </div>
+                        )
                       )}
                       <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${statusMeta.badgeBg} ${statusMeta.badgeText}`}>
                         {statusMeta.label}
